@@ -814,7 +814,7 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
                 close: stock.close,
                 change: stock.change,
                 changePct: stock.changePct,
-                volume: stock.volume/100,
+                volume: Math.floor(stock.volume/100),
                 market_cap: stock.market_cap,
                 pe_ratio: stock.pe_ratio,
                 eps: stock.eps,
