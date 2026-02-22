@@ -13,6 +13,7 @@ const require = createRequire(import.meta.url);
 const serviceAccount = require("./serviceAccountKey.json");
 import maskData from './utils/dataMasker.js'; // 👈 Jangan lupa import
 import optionalAuth from './middleware/optionalAuth.js'; // Import middleware tadi
+const cron = require('node-cron');
 
 dotenv.config();
 
@@ -844,216 +845,227 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
 // ENDPOINT 2: ADMIN / CRON (UPDATE BERAT - TULIS DB)
 // ----------------------------------------------------
 app.get('/api/update-sector', async (req, res) => {
+    // const sectorName = req.query.name;
+
+    // if (!sectorName || !SECTOR_MAP[sectorName.toUpperCase()]) {
+    //     return res.status(400).json({ error: "Sektor tidak ditemukan." });
+    // }
+
+    // res.json({ message: `Update sektor ${sectorName} dimulai (Mode: MA20 + 1 Year Return)...` });
+
+    // const stockList = SECTOR_MAP[sectorName.toUpperCase()];
+    // const today = new Date();
+    
+    // // 🔥 PERUBAHAN 1: Mundurin Tanggal 1 Tahun (365 hari)
+    // // Biar bisa hitung kinerja 1 tahun terakhir
+    // const startDate = new Date();
+    // startDate.setDate(today.getDate() - 365); 
+
+    // (async () => {
+    //     for (const ticker of stockList) {
+    //         const symbol = ticker + ".JK";
+    //         try {
+    //             // --- STEP 1: TARIK DATA ---
+    //             const [quoteResult, historyResult] = await Promise.all([
+    //                 yahooFinance.quoteSummary(symbol, {
+    //                     modules: ["price", "summaryDetail", "defaultKeyStatistics"]
+    //                 }).catch(e => null),
+                    
+    //                 // Tarik history 1 tahun ke belakang
+    //                 yahooFinance.historical(symbol, { 
+    //                     period1: startDate, 
+    //                     period2: new Date(),
+    //                     interval: '1d' 
+    //                 }).catch(e => [])
+    //             ]);                
+
+    //             if (!quoteResult || !quoteResult.price || !quoteResult.price.regularMarketPrice) {
+    //                 console.log(`⚠️ Skip ${ticker}: Data corrupt.`);
+    //                 continue;
+    //             }
+
+    //             const priceData = quoteResult.price;
+    //             const summary = quoteResult.summaryDetail || {};
+    //             const stats = quoteResult.defaultKeyStatistics || {};
+    //             const currentPrice = priceData.regularMarketPrice;
+
+    //             // --- STEP 2: HITUNG TRADING PLAN (Function kamu yg lama) ---
+    //             const plan = calculatePlan(
+    //                 currentPrice,
+    //                 priceData.regularMarketDayHigh,
+    //                 priceData.regularMarketDayLow,
+    //                 summary.fiftyTwoWeekHigh,
+    //                 summary.fiftyTwoWeekLow
+    //             );
+
+    //             const screenerStats = analyzeCandles(historyResult);
+    //             const toPercent = (val) => val ? (val * 100).toFixed(2) + "%" : "-";
+    //             const toX = (val) => val ? val.toFixed(2) + "x" : "-";
+    //             const toDec = (val) => val ? val.toFixed(2) : "-";
+    //             // --- STEP 3: LOGIC SCREENER BARU (MA20 & 1 Year) 🔥 --- 
+                
+    //             // A. Hitung MA 20
+    //             // 1. Hitung MA 20 & 1 Year Return (Logic Sebelumnya)
+    //             const ma20Value = calculateMA(historyResult, 20);
+                
+    //             let oneYearReturnPct = 0;
+    //             if (historyResult.length > 0) {
+    //                 const price1YearAgo = historyResult[0].close;
+    //                 if (price1YearAgo > 0) {
+    //                     oneYearReturnPct = ((currentPrice - price1YearAgo) / price1YearAgo) * 100;
+    //                 }
+    //             }
+    //             oneYearReturnPct = parseFloat(oneYearReturnPct.toFixed(2));
+
+    //             // --- LOGIC BARU SESUAI REQUEST ---
+                
+    //             // A. Data Pendukung
+    //             const currentVol = summary.volume || 0;
+    //             const prevClosePrice = priceData.regularMarketPreviousClose;
+                
+    //             // Ambil Volume Kemarin (H-1) dari history
+    //             // Kita ambil index ke-2 dari belakang untuk aman (jaga-jaga kalau index terakhir itu data hari ini yang belum close)
+    //             const prevCandle = historyResult.length >= 2 ? historyResult[historyResult.length - 2] : null;
+    //             const prevVol = prevCandle ? prevCandle.volume : currentVol; // Fallback kalau data kurang
+
+    //             // B. Pengecekan Syarat (Satu per satu)
+                
+    //             // Syarat 1: Vol > 1.5x Volume Sebelumnya
+    //             const condVolSpike = currentVol > (1.5 * prevVol);
+                
+    //             // Syarat 2: Price > 55
+    //             const condPrice55 = currentPrice > 55;
+                
+    //             // Syarat 3: Price > Price Sebelumnya (Lagi Ijo)
+    //             const condGreen = currentPrice > prevClosePrice;
+                
+    //             // Syarat 4: Transaksi > 100 Juta
+    //             const transactionValue = currentPrice * currentVol;
+    //             const condLiquid = transactionValue > 100000000;
+                
+    //             // Syarat 5: 1 Year Return < 1 (Sleeping Giant)
+    //             const condSleeping = oneYearReturnPct < 1;
+                
+    //             // Syarat 6: Price > MA 20
+    //             const condAboveMA20 = ma20Value > 0 && currentPrice > ma20Value;
+
+    //             // --- KESIMPULAN AKHIR ---
+    //             // Semua syarat harus TRUE
+    //             const isMatchScreener = condVolSpike && condPrice55 && condGreen && condLiquid && condSleeping && condAboveMA20;
+
+    //             // --- STEP 4: SIMPAN KE DB ---
+    //             await StockModel.findOneAndUpdate(
+    //                 { symbol: symbol },
+    //                 {
+    //                     symbol: symbol,
+    //                     company: priceData.longName,
+    //                     sector: sectorName.toUpperCase(),
+                        
+    //                     // ... (Field Harga Sama Kayak Dulu) ...
+    //                     open: priceData.regularMarketOpen,
+    //                     high: priceData.regularMarketDayHigh,
+    //                     low: priceData.regularMarketDayLow,
+    //                     close: priceData.regularMarketPrice,
+    //                     change: priceData.regularMarketChange,
+    //                     changePct: priceData.regularMarketChangePercent 
+    //                         ? parseFloat((priceData.regularMarketChangePercent * 100).toFixed(2)) 
+    //                         : 0,
+    //                     volume: summary.volume,
+    //                     avgVol10day: priceData.averageDailyVolume10Day,
+    //                     avgVol3M: priceData.averageDailyVolume3Month,
+    //                     previousClose: priceData.regularMarketPreviousClose,
+
+    //                     percentageDownATH: plan.pctDownATH,
+    //                     percentageUpFromBottom: plan.pctUpBottom,
+    //                     fiftyTwoWeekHigh: summary.fiftyTwoWeekHigh,
+    //                     fiftyTwoWeekLow: summary.fiftyTwoWeekLow,
+
+    //                     fundamentals: {
+    //                         marketCap: summary.marketCap,
+    //                         bookValue: stats.bookValue,
+    //                         pe_ratio: toX(summary.trailingPE),
+    //                         eps: toDec(stats.trailingEps),
+    //                         priceToBook: toX(stats.priceToBook),
+    //                         dividendYield: toPercent(summary.dividendYield),
+    //                         profitMargins: toPercent(stats.profitMargins),
+    //                         incomeQoQ: toPercent(stats.earningsQuarterlyGrowth), // "10.5%"
+    //                         lastDividendValue: stats.lastDividendValue,
+    //                         enterpriseValue: stats.enterpriseValue,
+    //                         enterpriseToEBITDA: toX(stats.enterpriseToEbitda),
+    //                         enterpriseToRevenue: toX(stats.enterpriseToRevenue),
+    //                         netIncomeToCommon: stats.netIncomeToCommon
+    //                     },
+
+    //                     ownership: {
+    //                         insiders: toPercent(stats.heldPercentInsiders),
+    //                         institutions: toPercent(stats.heldPercentInstitutions)
+    //                     },
+
+    //                     // Screener Field 🔥
+    //                     screener: {
+    //                         is_big_money: screenerStats.is_big_money,
+    //                         big_money_count: screenerStats.big_money_count,
+    //                         is_small_accum: screenerStats.is_small_accum,
+    //                         is_scalping: screenerStats.is_scalping, // <--- JANGAN LUPA INI!
+
+    //                         // 2. Data Ranking (PENTING BUAT SORTING API)
+    //                         total_value_today: screenerStats.total_value_today, // Buat ranking Likuiditas
+    //                         change_pct: screenerStats.change_pct,               // Buat ranking Top Gainers
+    //                         avg_value_transaction: screenerStats.avg_value_transaction, // Buat filter Big Cap
+
+    //                         // Technical Indicators
+    //                         one_years_up: isMatchScreener, 
+
+    //                         // Detail Indikator (Disimpan biar bisa didebug/ditampilkan)
+    //                         ma20: ma20Value,
+    //                         one_year_return: oneYearReturnPct,
+    //                         tx_value: transactionValue,
+    //                         vol_spike_ratio: prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0", // Misal: "1.8x"
+
+    //                         last_updated: new Date()
+    //                     },
+
+    //                     trading_plan: {
+    //                         pivot: plan.pivot,
+    //                         support_pertahanan: plan.s1,
+    //                         support_kuat: plan.s2,
+    //                         support_awal: plan.s3,
+    //                         best_entry: plan.bestEntry,
+    //                         avg_down: plan.avgDown,
+    //                         tsp1: plan.tsp1,
+    //                         tsp2: plan.tsp2,
+    //                         tsp3: plan.tsp3,
+    //                         rekomendasi: priceData.regularMarketPrice < plan.s3 ? "WAIT" : "BUY"
+    //                     },
+                        
+    //                     // Percentage Number (Tanpa %)
+    //                     percentageDownATH: plan.pctDownATH,
+    //                     percentageUpFromBottom: plan.pctUpBottom
+    //                 },
+    //                 { upsert: true, new: true }
+    //             );
+
+    //             console.log(`✅ ${ticker} | Price: ${currentPrice} | MA20: ${ma20Value} | 1Y: ${oneYearReturnPct}%`);
+
+    //         } catch (err) {
+    //             console.error(`❌ Fail: ${ticker}`, err.message);
+    //         }
+            
+    //         await sleep(1800); // Jangan terlalu ngebut, nanti Yahoo nge-block
+    //     }
+    //     console.log(`🏁 Update Selesai: ${sectorName}`);
+    // })();
     const sectorName = req.query.name;
 
     if (!sectorName || !SECTOR_MAP[sectorName.toUpperCase()]) {
         return res.status(400).json({ error: "Sektor tidak ditemukan." });
     }
 
-    res.json({ message: `Update sektor ${sectorName} dimulai (Mode: MA20 + 1 Year Return)...` });
+    // Kasih response duluan biar browser gak loading terus
+    res.json({ message: `Update sektor ${sectorName} sedang berjalan di background...` });
 
-    const stockList = SECTOR_MAP[sectorName.toUpperCase()];
-    const today = new Date();
-    
-    // 🔥 PERUBAHAN 1: Mundurin Tanggal 1 Tahun (365 hari)
-    // Biar bisa hitung kinerja 1 tahun terakhir
-    const startDate = new Date();
-    startDate.setDate(today.getDate() - 365); 
-
-    (async () => {
-        for (const ticker of stockList) {
-            const symbol = ticker + ".JK";
-            try {
-                // --- STEP 1: TARIK DATA ---
-                const [quoteResult, historyResult] = await Promise.all([
-                    yahooFinance.quoteSummary(symbol, {
-                        modules: ["price", "summaryDetail", "defaultKeyStatistics"]
-                    }).catch(e => null),
-                    
-                    // Tarik history 1 tahun ke belakang
-                    yahooFinance.historical(symbol, { 
-                        period1: startDate, 
-                        period2: new Date(),
-                        interval: '1d' 
-                    }).catch(e => [])
-                ]);                
-
-                if (!quoteResult || !quoteResult.price || !quoteResult.price.regularMarketPrice) {
-                    console.log(`⚠️ Skip ${ticker}: Data corrupt.`);
-                    continue;
-                }
-
-                const priceData = quoteResult.price;
-                const summary = quoteResult.summaryDetail || {};
-                const stats = quoteResult.defaultKeyStatistics || {};
-                const currentPrice = priceData.regularMarketPrice;
-
-                // --- STEP 2: HITUNG TRADING PLAN (Function kamu yg lama) ---
-                const plan = calculatePlan(
-                    currentPrice,
-                    priceData.regularMarketDayHigh,
-                    priceData.regularMarketDayLow,
-                    summary.fiftyTwoWeekHigh,
-                    summary.fiftyTwoWeekLow
-                );
-
-                const screenerStats = analyzeCandles(historyResult);
-                const toPercent = (val) => val ? (val * 100).toFixed(2) + "%" : "-";
-                const toX = (val) => val ? val.toFixed(2) + "x" : "-";
-                const toDec = (val) => val ? val.toFixed(2) : "-";
-                // --- STEP 3: LOGIC SCREENER BARU (MA20 & 1 Year) 🔥 --- 
-                
-                // A. Hitung MA 20
-                // 1. Hitung MA 20 & 1 Year Return (Logic Sebelumnya)
-                const ma20Value = calculateMA(historyResult, 20);
-                
-                let oneYearReturnPct = 0;
-                if (historyResult.length > 0) {
-                    const price1YearAgo = historyResult[0].close;
-                    if (price1YearAgo > 0) {
-                        oneYearReturnPct = ((currentPrice - price1YearAgo) / price1YearAgo) * 100;
-                    }
-                }
-                oneYearReturnPct = parseFloat(oneYearReturnPct.toFixed(2));
-
-                // --- LOGIC BARU SESUAI REQUEST ---
-                
-                // A. Data Pendukung
-                const currentVol = summary.volume || 0;
-                const prevClosePrice = priceData.regularMarketPreviousClose;
-                
-                // Ambil Volume Kemarin (H-1) dari history
-                // Kita ambil index ke-2 dari belakang untuk aman (jaga-jaga kalau index terakhir itu data hari ini yang belum close)
-                const prevCandle = historyResult.length >= 2 ? historyResult[historyResult.length - 2] : null;
-                const prevVol = prevCandle ? prevCandle.volume : currentVol; // Fallback kalau data kurang
-
-                // B. Pengecekan Syarat (Satu per satu)
-                
-                // Syarat 1: Vol > 1.5x Volume Sebelumnya
-                const condVolSpike = currentVol > (1.5 * prevVol);
-                
-                // Syarat 2: Price > 55
-                const condPrice55 = currentPrice > 55;
-                
-                // Syarat 3: Price > Price Sebelumnya (Lagi Ijo)
-                const condGreen = currentPrice > prevClosePrice;
-                
-                // Syarat 4: Transaksi > 100 Juta
-                const transactionValue = currentPrice * currentVol;
-                const condLiquid = transactionValue > 100000000;
-                
-                // Syarat 5: 1 Year Return < 1 (Sleeping Giant)
-                const condSleeping = oneYearReturnPct < 1;
-                
-                // Syarat 6: Price > MA 20
-                const condAboveMA20 = ma20Value > 0 && currentPrice > ma20Value;
-
-                // --- KESIMPULAN AKHIR ---
-                // Semua syarat harus TRUE
-                const isMatchScreener = condVolSpike && condPrice55 && condGreen && condLiquid && condSleeping && condAboveMA20;
-
-                // --- STEP 4: SIMPAN KE DB ---
-                await StockModel.findOneAndUpdate(
-                    { symbol: symbol },
-                    {
-                        symbol: symbol,
-                        company: priceData.longName,
-                        sector: sectorName.toUpperCase(),
-                        
-                        // ... (Field Harga Sama Kayak Dulu) ...
-                        open: priceData.regularMarketOpen,
-                        high: priceData.regularMarketDayHigh,
-                        low: priceData.regularMarketDayLow,
-                        close: priceData.regularMarketPrice,
-                        change: priceData.regularMarketChange,
-                        changePct: priceData.regularMarketChangePercent 
-                            ? parseFloat((priceData.regularMarketChangePercent * 100).toFixed(2)) 
-                            : 0,
-                        volume: summary.volume,
-                        avgVol10day: priceData.averageDailyVolume10Day,
-                        avgVol3M: priceData.averageDailyVolume3Month,
-                        previousClose: priceData.regularMarketPreviousClose,
-
-                        percentageDownATH: plan.pctDownATH,
-                        percentageUpFromBottom: plan.pctUpBottom,
-                        fiftyTwoWeekHigh: summary.fiftyTwoWeekHigh,
-                        fiftyTwoWeekLow: summary.fiftyTwoWeekLow,
-
-                        fundamentals: {
-                            marketCap: summary.marketCap,
-                            bookValue: stats.bookValue,
-                            pe_ratio: toX(summary.trailingPE),
-                            eps: toDec(stats.trailingEps),
-                            priceToBook: toX(stats.priceToBook),
-                            dividendYield: toPercent(summary.dividendYield),
-                            profitMargins: toPercent(stats.profitMargins),
-                            incomeQoQ: toPercent(stats.earningsQuarterlyGrowth), // "10.5%"
-                            lastDividendValue: stats.lastDividendValue,
-                            enterpriseValue: stats.enterpriseValue,
-                            enterpriseToEBITDA: toX(stats.enterpriseToEbitda),
-                            enterpriseToRevenue: toX(stats.enterpriseToRevenue),
-                            netIncomeToCommon: stats.netIncomeToCommon
-                        },
-
-                        ownership: {
-                            insiders: toPercent(stats.heldPercentInsiders),
-                            institutions: toPercent(stats.heldPercentInstitutions)
-                        },
-
-                        // Screener Field 🔥
-                        screener: {
-                            is_big_money: screenerStats.is_big_money,
-                            big_money_count: screenerStats.big_money_count,
-                            is_small_accum: screenerStats.is_small_accum,
-                            is_scalping: screenerStats.is_scalping, // <--- JANGAN LUPA INI!
-
-                            // 2. Data Ranking (PENTING BUAT SORTING API)
-                            total_value_today: screenerStats.total_value_today, // Buat ranking Likuiditas
-                            change_pct: screenerStats.change_pct,               // Buat ranking Top Gainers
-                            avg_value_transaction: screenerStats.avg_value_transaction, // Buat filter Big Cap
-
-                            // Technical Indicators
-                            one_years_up: isMatchScreener, 
-
-                            // Detail Indikator (Disimpan biar bisa didebug/ditampilkan)
-                            ma20: ma20Value,
-                            one_year_return: oneYearReturnPct,
-                            tx_value: transactionValue,
-                            vol_spike_ratio: prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0", // Misal: "1.8x"
-
-                            last_updated: new Date()
-                        },
-
-                        trading_plan: {
-                            pivot: plan.pivot,
-                            support_pertahanan: plan.s1,
-                            support_kuat: plan.s2,
-                            support_awal: plan.s3,
-                            best_entry: plan.bestEntry,
-                            avg_down: plan.avgDown,
-                            tsp1: plan.tsp1,
-                            tsp2: plan.tsp2,
-                            tsp3: plan.tsp3,
-                            rekomendasi: priceData.regularMarketPrice < plan.s3 ? "WAIT" : "BUY"
-                        },
-                        
-                        // Percentage Number (Tanpa %)
-                        percentageDownATH: plan.pctDownATH,
-                        percentageUpFromBottom: plan.pctUpBottom
-                    },
-                    { upsert: true, new: true }
-                );
-
-                console.log(`✅ ${ticker} | Price: ${currentPrice} | MA20: ${ma20Value} | 1Y: ${oneYearReturnPct}%`);
-
-            } catch (err) {
-                console.error(`❌ Fail: ${ticker}`, err.message);
-            }
-            
-            await sleep(1800); // Jangan terlalu ngebut, nanti Yahoo nge-block
-        }
-        console.log(`🏁 Update Selesai: ${sectorName}`);
-    })();
+    // Jalankan fungsinya di background
+    processSectorUpdate(sectorName);
 });
 
 app.get('/api/update-sector-lama', async (req, res) => {
@@ -1953,3 +1965,227 @@ app.delete('/api/comments/:id', optionalAuth, async (req, res) => {
 })
 
 app.listen(PORT, () => console.log(`Server run di ${PORT}`));
+
+async function processSectorUpdate(sectorName) {
+    if (!sectorName || !SECTOR_MAP[sectorName.toUpperCase()]) {
+        console.log(`⚠️ Sektor ${sectorName} tidak valid atau tidak ditemukan.`);
+        return;
+    }
+
+    console.log(`🚀 [CRON] Update sektor ${sectorName} dimulai...`);
+
+    const stockList = SECTOR_MAP[sectorName.toUpperCase()];
+    const today = new Date();
+    
+    const startDate = new Date();
+    startDate.setDate(today.getDate() - 365); 
+
+    for (const ticker of stockList) {
+        const symbol = ticker + ".JK";
+        try {
+                // --- STEP 1: TARIK DATA ---
+                const [quoteResult, historyResult] = await Promise.all([
+                    yahooFinance.quoteSummary(symbol, {
+                        modules: ["price", "summaryDetail", "defaultKeyStatistics"]
+                    }).catch(e => null),
+                    
+                    // Tarik history 1 tahun ke belakang
+                    yahooFinance.historical(symbol, { 
+                        period1: startDate, 
+                        period2: new Date(),
+                        interval: '1d' 
+                    }).catch(e => [])
+                ]);                
+
+                if (!quoteResult || !quoteResult.price || !quoteResult.price.regularMarketPrice) {
+                    console.log(`⚠️ Skip ${ticker}: Data corrupt.`);
+                    continue;
+                }
+
+                const priceData = quoteResult.price;
+                const summary = quoteResult.summaryDetail || {};
+                const stats = quoteResult.defaultKeyStatistics || {};
+                const currentPrice = priceData.regularMarketPrice;
+
+                // --- STEP 2: HITUNG TRADING PLAN (Function kamu yg lama) ---
+                const plan = calculatePlan(
+                    currentPrice,
+                    priceData.regularMarketDayHigh,
+                    priceData.regularMarketDayLow,
+                    summary.fiftyTwoWeekHigh,
+                    summary.fiftyTwoWeekLow
+                );
+
+                const screenerStats = analyzeCandles(historyResult);
+                const toPercent = (val) => val ? (val * 100).toFixed(2) + "%" : "-";
+                const toX = (val) => val ? val.toFixed(2) + "x" : "-";
+                const toDec = (val) => val ? val.toFixed(2) : "-";
+                // --- STEP 3: LOGIC SCREENER BARU (MA20 & 1 Year) 🔥 --- 
+                
+                // A. Hitung MA 20
+                // 1. Hitung MA 20 & 1 Year Return (Logic Sebelumnya)
+                const ma20Value = calculateMA(historyResult, 20);
+                
+                let oneYearReturnPct = 0;
+                if (historyResult.length > 0) {
+                    const price1YearAgo = historyResult[0].close;
+                    if (price1YearAgo > 0) {
+                        oneYearReturnPct = ((currentPrice - price1YearAgo) / price1YearAgo) * 100;
+                    }
+                }
+                oneYearReturnPct = parseFloat(oneYearReturnPct.toFixed(2));
+
+                // --- LOGIC BARU SESUAI REQUEST ---
+                
+                // A. Data Pendukung
+                const currentVol = summary.volume || 0;
+                const prevClosePrice = priceData.regularMarketPreviousClose;
+                
+                // Ambil Volume Kemarin (H-1) dari history
+                // Kita ambil index ke-2 dari belakang untuk aman (jaga-jaga kalau index terakhir itu data hari ini yang belum close)
+                const prevCandle = historyResult.length >= 2 ? historyResult[historyResult.length - 2] : null;
+                const prevVol = prevCandle ? prevCandle.volume : currentVol; // Fallback kalau data kurang
+
+                // B. Pengecekan Syarat (Satu per satu)
+                
+                // Syarat 1: Vol > 1.5x Volume Sebelumnya
+                const condVolSpike = currentVol > (1.5 * prevVol);
+                
+                // Syarat 2: Price > 55
+                const condPrice55 = currentPrice > 55;
+                
+                // Syarat 3: Price > Price Sebelumnya (Lagi Ijo)
+                const condGreen = currentPrice > prevClosePrice;
+                
+                // Syarat 4: Transaksi > 100 Juta
+                const transactionValue = currentPrice * currentVol;
+                const condLiquid = transactionValue > 100000000;
+                
+                // Syarat 5: 1 Year Return < 1 (Sleeping Giant)
+                const condSleeping = oneYearReturnPct < 1;
+                
+                // Syarat 6: Price > MA 20
+                const condAboveMA20 = ma20Value > 0 && currentPrice > ma20Value;
+
+                // --- KESIMPULAN AKHIR ---
+                // Semua syarat harus TRUE
+                const isMatchScreener = condVolSpike && condPrice55 && condGreen && condLiquid && condSleeping && condAboveMA20;
+
+                // --- STEP 4: SIMPAN KE DB ---
+                await StockModel.findOneAndUpdate(
+                    { symbol: symbol },
+                    {
+                        symbol: symbol,
+                        company: priceData.longName,
+                        sector: sectorName.toUpperCase(),
+                        
+                        // ... (Field Harga Sama Kayak Dulu) ...
+                        open: priceData.regularMarketOpen,
+                        high: priceData.regularMarketDayHigh,
+                        low: priceData.regularMarketDayLow,
+                        close: priceData.regularMarketPrice,
+                        change: priceData.regularMarketChange,
+                        changePct: priceData.regularMarketChangePercent 
+                            ? parseFloat((priceData.regularMarketChangePercent * 100).toFixed(2)) 
+                            : 0,
+                        volume: summary.volume,
+                        avgVol10day: priceData.averageDailyVolume10Day,
+                        avgVol3M: priceData.averageDailyVolume3Month,
+                        previousClose: priceData.regularMarketPreviousClose,
+
+                        percentageDownATH: plan.pctDownATH,
+                        percentageUpFromBottom: plan.pctUpBottom,
+                        fiftyTwoWeekHigh: summary.fiftyTwoWeekHigh,
+                        fiftyTwoWeekLow: summary.fiftyTwoWeekLow,
+
+                        fundamentals: {
+                            marketCap: summary.marketCap,
+                            bookValue: stats.bookValue,
+                            pe_ratio: toX(summary.trailingPE),
+                            eps: toDec(stats.trailingEps),
+                            priceToBook: toX(stats.priceToBook),
+                            dividendYield: toPercent(summary.dividendYield),
+                            profitMargins: toPercent(stats.profitMargins),
+                            incomeQoQ: toPercent(stats.earningsQuarterlyGrowth), // "10.5%"
+                            lastDividendValue: stats.lastDividendValue,
+                            enterpriseValue: stats.enterpriseValue,
+                            enterpriseToEBITDA: toX(stats.enterpriseToEbitda),
+                            enterpriseToRevenue: toX(stats.enterpriseToRevenue),
+                            netIncomeToCommon: stats.netIncomeToCommon
+                        },
+
+                        ownership: {
+                            insiders: toPercent(stats.heldPercentInsiders),
+                            institutions: toPercent(stats.heldPercentInstitutions)
+                        },
+
+                        // Screener Field 🔥
+                        screener: {
+                            is_big_money: screenerStats.is_big_money,
+                            big_money_count: screenerStats.big_money_count,
+                            is_small_accum: screenerStats.is_small_accum,
+                            is_scalping: screenerStats.is_scalping, // <--- JANGAN LUPA INI!
+
+                            // 2. Data Ranking (PENTING BUAT SORTING API)
+                            total_value_today: screenerStats.total_value_today, // Buat ranking Likuiditas
+                            change_pct: screenerStats.change_pct,               // Buat ranking Top Gainers
+                            avg_value_transaction: screenerStats.avg_value_transaction, // Buat filter Big Cap
+
+                            // Technical Indicators
+                            one_years_up: isMatchScreener, 
+
+                            // Detail Indikator (Disimpan biar bisa didebug/ditampilkan)
+                            ma20: ma20Value,
+                            one_year_return: oneYearReturnPct,
+                            tx_value: transactionValue,
+                            vol_spike_ratio: prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0", // Misal: "1.8x"
+
+                            last_updated: new Date()
+                        },
+
+                        trading_plan: {
+                            pivot: plan.pivot,
+                            support_pertahanan: plan.s1,
+                            support_kuat: plan.s2,
+                            support_awal: plan.s3,
+                            best_entry: plan.bestEntry,
+                            avg_down: plan.avgDown,
+                            tsp1: plan.tsp1,
+                            tsp2: plan.tsp2,
+                            tsp3: plan.tsp3,
+                            rekomendasi: priceData.regularMarketPrice < plan.s3 ? "WAIT" : "BUY"
+                        },
+                        
+                        // Percentage Number (Tanpa %)
+                        percentageDownATH: plan.pctDownATH,
+                        percentageUpFromBottom: plan.pctUpBottom
+                    },
+                    { upsert: true, new: true }
+                );
+
+                console.log(`✅ ${ticker} | Price: ${currentPrice} | MA20: ${ma20Value} | 1Y: ${oneYearReturnPct}%`);
+
+            } catch (err) {
+                console.error(`❌ Fail: ${ticker}`, err.message);
+            }
+            
+            await sleep(1800); // Jangan terlalu ngebut, nanti Yahoo nge-block
+    }
+    console.log(`🏁 [CRON] Update Selesai: ${sectorName}`);
+}
+
+cron.schedule('30 16 * * 1-5', async () => {
+    console.log("⏰ Jam 17:00! Memulai auto-update semua sektor...");
+    
+    const allSectors = Object.keys(SECTOR_MAP); // Ambil semua nama sektor (FINANCE, BASIC, dll)
+    
+    // Looping untuk update SEMUA sektor satu per satu
+    for (const sector of allSectors) {
+        await processSectorUpdate(sector);
+    }
+    
+    console.log("🎉 SEMUA SEKTOR BERHASIL DIUPDATE OTOMATIS!");
+}, {
+    scheduled: true,
+    timezone: "Asia/Jakarta" // PENTING 🔥 Biar ngikutin jam WIB (bukan jam server luar negeri)
+});
