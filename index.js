@@ -526,6 +526,27 @@ app.get('/api/auth/me', optionalAuth, async (req, res) => {
     }
 });
 
+app.post('/api/account/delete', async (req, res) => {
+    // 1. Tangkap email/uid dari Body JSON
+    const { email, uid } = req.body;
+
+    if (!email || !uid) {
+        return res.status(400).json({ error: "Email dan UID wajib diisi!" });
+    }
+
+    try {
+        // 2. Hapus data di MongoDB
+        await UserModel.findOneAndDelete({ email: email });
+
+        // 3. (Opsional) Hapus Auth di Firebase
+        // await admin.auth().deleteUser(uid);
+
+        res.json({ message: "Akun berhasil dihapus permanen." });
+    } catch (error) {
+        res.status(500).json({ error: "Gagal menghapus akun" });
+    }
+});
+
 app.post('/api/user/update-premium', optionalAuth, async (req, res) => {
     try {
         const { is_premium } = req.body; // Terima status true/false dari Android
