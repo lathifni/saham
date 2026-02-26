@@ -13,6 +13,9 @@ const require = createRequire(import.meta.url);
 const serviceAccount = require("./serviceAccountKey.json");
 import maskData from './utils/dataMasker.js'; // 👈 Jangan lupa import
 import optionalAuth from './middleware/optionalAuth.js'; // Import middleware tadi
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
 const cron = require('node-cron');
 
 dotenv.config();
@@ -294,6 +297,85 @@ function analyzeCandles(history) {
 
     if (condPrice && condGain && condVol && condValue) {
         result.is_scalping = true;
+    }
+
+    return result;
+}
+function analyzeCandlesIntraday(history) {
+    let result = {
+        // Status Flags
+        is_big_money: false,
+        big_money_count: 0,
+        is_small_accum: false,
+
+        // Data Penting buat Sorting/Ranking di DB
+        last_price: 0,
+        prev_price: 0,
+        change_pct: 0.0,       // Buat sort Top Gainers
+        total_value_today: 0,  // Buat sort Liquidity (Ranking)
+        avg_value_transaction: 0 
+    };
+
+    // Validasi data (Min 12 candle)    
+    if (!history || history.length < 12) return result;
+
+    const lastCandle = history[history.length - 1];
+    const prevCandle = history[history.length - 2];
+    
+    // Set Data Dasar
+    result.last_price = lastCandle.close;
+    result.prev_price = prevCandle.close;
+    result.change_pct = ((lastCandle.close - prevCandle.close) / prevCandle.close) * 100;
+    result.total_value_today = lastCandle.close * lastCandle.volume;
+
+    // 0. LOGIC AVG VALUE (11 Hari)
+    const last11 = history.slice(-11);
+    const totalValue11 = last11.reduce((acc, c) => acc + (c.close * (c.volume || 0)), 0);
+    result.avg_value_transaction = Math.floor(totalValue11 / last11.length);
+
+    // ============================================================
+    // 1. LOGIC BIG ACCUMULATION (Scanner 10 Hari)
+    // ============================================================
+    // ... (KODE LOGIC BIG ACCUM YANG SUDAH KITA BUAT SEBELUMNYA - COPAS AJA) ...
+    // Pastikan variabel result.is_big_money dan result.big_money_count terisi di sini
+
+    let validBigMoneyCount = 0;
+    for (let i = history.length - 1; i > history.length - 11; i--) {
+        const curr = history[i];     
+        const prev = history[i - 1]; 
+        if (!prev) continue;
+        const isGreen = curr.close > prev.close;
+        const isFlatHigh = (curr.close === prev.close) && (curr.close === curr.high);
+        const isBullish = isGreen || isFlatHigh;
+        const isVolSpike = curr.volume >= (prev.volume * 3);
+
+        if (isBullish && isVolSpike) {
+            const stl = calculateSTL(curr.low); 
+            let isStillValid = true;
+            for (let j = i + 1; j < history.length; j++) {
+                if (history[j].close < stl) {
+                    isStillValid = false;
+                    break; 
+                }
+            }
+            if (isStillValid) validBigMoneyCount++;
+        }
+    }
+    if (validBigMoneyCount >= 2) {
+        result.is_big_money = true;
+        result.big_money_count = validBigMoneyCount;
+    }
+
+    // ============================================================
+    // 2. LOGIC SMALL ACCUMULATION
+    // ============================================================
+    const MIN_TRANSACTION_SMALL = 100000000; // 100 Juta
+    if (result.total_value_today >= MIN_TRANSACTION_SMALL) {
+        const isPriceRangeMasuk = result.change_pct >= 2 && result.change_pct <= 5;
+        const isVolNaik = lastCandle.volume >= (prevCandle.volume * 1.5);
+        if (isPriceRangeMasuk && isVolNaik) {
+            result.is_small_accum = true;
+        }
     }
 
     return result;
@@ -1521,14 +1603,14 @@ app.get('/api/market/chart', async (req, res) => {
         // Mapping Manual Data Yahoo ke Format Kamu
         const chartData = timestamps.map((time, index) => ({
             time: new Date(time * 1000).toISOString().split('T')[0], // Convert Unix ke YYYY-MM-DD
-            // open: quotes.open[index],
-            // high: quotes.high[index],
-            // low: quotes.low[index],
-            // close: quotes.close[index]
-            open: quotes.open[index] ? Math.round(quotes.open[index]) : null,
-            high: quotes.high[index] ? Math.round(quotes.high[index]) : null,
-            low: quotes.low[index] ? Math.round(quotes.low[index]) : null,
-            close: quotes.close[index] ? Math.round(quotes.close[index]) : null
+            open: quotes.open[index],
+            high: quotes.high[index],
+            low: quotes.low[index],
+            close: quotes.close[index]
+            // open: quotes.open[index] ? Math.round(quotes.open[index]) : null,
+            // high: quotes.high[index] ? Math.round(quotes.high[index]) : null,
+            // low: quotes.low[index] ? Math.round(quotes.low[index]) : null,
+            // close: quotes.close[index] ? Math.round(quotes.close[index]) : null
         })).filter(item => item.close != null); // Filter data null (error yahoo)
 
         // 2. SIMPAN KE CACHE 💾
@@ -2209,4 +2291,197 @@ cron.schedule('30 16 * * 1-5', async () => {
 }, {
     scheduled: true,
     timezone: "Asia/Jakarta" // PENTING 🔥 Biar ngikutin jam WIB (bukan jam server luar negeri)
+});
+
+
+function getAllSymbols() {
+    let allStocks = [];
+    for (const sector in SECTOR_MAP) {
+        allStocks.push(...SECTOR_MAP[sector]);
+    }
+    // Ingat: Ini udah nambahin .JK otomatis -> ["GDST.JK", "KRAS.JK"]
+    return allStocks.map(sym => `${sym}.JK`);
+}
+
+// Function Utama (Tanpa parameter sectorName)
+async function processIntradayUpdateAll() {
+    console.log(`⚡ [CRON INTRADAY] Update SEMUA saham dimulai...`);
+
+    // 1. Ambil seluruh list saham gabungan
+    const allSymbols = getAllSymbols(); 
+    
+    const today = new Date();
+    // Tarik 7 hari ke belakang (buat nutupin libur Sabtu-Minggu)
+    const startDate = new Date();
+    startDate.setDate(today.getDate() - 22); 
+
+    // 2. Looping langsung dari array gabungan
+    for (const symbol of allSymbols) {
+        // Karena symbol udah ada .JK (misal: "BBCA.JK"), kita buang buat keperluan log
+        const ticker = symbol.replace(".JK", ""); 
+
+        try {
+            // --- STEP 1: TARIK DATA SUPER RINGAN ---
+            const [quoteResult, historyResult] = await Promise.all([
+                yahooFinance.quote(symbol).catch(e => null),
+                
+                yahooFinance.historical(symbol, { 
+                    period1: startDate, 
+                    period2: new Date(),
+                    interval: '1d' 
+                }).catch(e => [])
+            ]);                
+
+            if (!quoteResult || !quoteResult.regularMarketPrice) {
+                continue; // Skip kalau data bolong
+            }
+
+            const currentPrice = quoteResult.regularMarketPrice;
+            const currentVol = quoteResult.regularMarketVolume || 0;
+            const prevClosePrice = quoteResult.regularMarketPreviousClose;
+            
+            // --- STEP 2: LOGIC SCREENER INTRADAY ---
+            const screenerStats = analyzeCandlesIntraday(historyResult);
+            
+            // Ambil Volume H-1 dari history buat nyari Spike
+            const prevCandle = historyResult.length >= 2 ? historyResult[historyResult.length - 2] : null;
+            const prevVol = prevCandle ? prevCandle.volume : currentVol; 
+            
+            const transactionValue = currentPrice * currentVol;
+            const volSpikeRatio = prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0";
+
+            // --- STEP 3: UPDATE KE DB ---
+            await StockModel.findOneAndUpdate(
+                { symbol: symbol }, // Cari pakai yang ada .JK-nya
+                {
+                    $set: {
+                        open: quoteResult.regularMarketOpen,
+                        high: quoteResult.regularMarketDayHigh,
+                        low: quoteResult.regularMarketDayLow,
+                        close: currentPrice,
+                        change: quoteResult.regularMarketChange,
+                        changePct: quoteResult.regularMarketChangePercent 
+                            ? parseFloat((quoteResult.regularMarketChangePercent).toFixed(2)) 
+                            : 0,
+                        volume: currentVol,
+                        previousClose: prevClosePrice,
+                        "screener.is_big_money": screenerStats.is_big_money,
+                        "screener.big_money_count": screenerStats.big_money_count,
+                        "screener.is_small_accum": screenerStats.is_small_accum,
+                        "screener.total_value_today": transactionValue,
+                        "screener.tx_value": transactionValue,
+                        "screener.change_pct": quoteResult.regularMarketChangePercent,
+                        "screener.vol_spike_ratio": volSpikeRatio,
+                        "screener.last_updated": new Date()
+                    }
+                },
+                { new: true }
+            );
+
+            console.log(`⚡ ${ticker} | P: ${currentPrice} | Vol: ${currentVol} | Spike: ${volSpikeRatio}x`);
+
+        } catch (err) {
+            console.error(`❌ Fail Intraday: ${ticker}`, err.message);
+        }
+        
+        // Jeda 500ms biar aman dari Yahoo
+        await sleep(800); 
+    }
+    console.log(`🏁 [CRON INTRADAY] Update SEMUA Saham Selesai!`);
+}
+
+// Jadwal Cron Job Intraday
+cron.schedule('*/15 09-16 * * 1-5', () => {
+    const now = new Date();
+    const hari = now.getDay(); // 1 = Senin, ..., 5 = Jumat
+    const jam = now.getHours();
+    const menit = now.getMinutes();
+
+    // ==========================================
+    // GERBANG PENJAGA 1: KHUSUS HARI JUMAT
+    // Istirahat: 11:45 s/d 13:59
+    // ==========================================
+    if (hari === 5) {
+        if ((jam === 11 && menit >= 45) || jam === 12 || jam === 13) {
+            console.log(`⏸️ [JUMAT ${jam}:${menit}] Istirahat Jum'atan, skip narik data!`);
+            return; // Berhenti di sini, jangan narik data
+        }
+    } 
+    // ==========================================
+    // GERBANG PENJAGA 2: SENIN - KAMIS
+    // Istirahat: 12:00 s/d 13:29
+    // ==========================================
+    else {
+        if (jam === 12 || (jam === 13 && menit < 30)) {
+            console.log(`⏸️ [${jam}:${menit}] Bursa istirahat siang, skip narik data!`);
+            return; // Berhenti di sini, jangan narik data
+        }
+    }
+
+    // Kalau lolos dari kedua gerbang di atas, baru hajar tarik data!
+    console.log(`▶️ [${jam}:${menit}] Market jalan, sikat data Intraday!`);
+    processIntradayUpdateAll();
+
+}, {
+    scheduled: true,
+    timezone: "Asia/Jakarta" // Wajib biar jamnya akurat ngikutin Jakarta
+});
+
+async function sendSmartScreenerNotif() {
+    try {
+        // 1. Cari Top 5 Big Accum (Urutkan dari transaksi paling gede)
+        const topBigAccum = await StockModel.find({ "screener.is_big_money": true })
+            .sort({ "screener.total_value_today": -1 })
+            .limit(5);
+
+        // 2. Cari Top 5 Small Accum (Urutkan dari transaksi paling gede)
+        const topSmallAccum = await StockModel.find({ "screener.is_small_accum": true })
+            .sort({ "screener.total_value_today": -1 })
+            .limit(5);
+
+        // Kalau market lagi sepi dan gak ada data sama sekali, jangan kirim notif
+        if (topBigAccum.length === 0 && topSmallAccum.length === 0) {
+            console.log("Market sepi, skip notif.");
+            return;
+        }
+
+        // 3. Rangkai Teks Notifikasinya (Pake .map biar otomatis jadi koma-komaan)
+        const bigNames = topBigAccum.map(s => s.symbol.replace(".JK", "")).join(", ");
+        const smallNames = topSmallAccum.map(s => s.symbol.replace(".JK", "")).join(", ");
+
+        let bodyText = "";
+        if (bigNames) bodyText += `🔥 Big Accum: ${bigNames}\n`;
+        if (smallNames) bodyText += `💎 Small Accum: ${smallNames}`;
+
+        // 4. Siapkan Payload Firebase
+        const message = {
+            notification: {
+                title: "Radar Screener Sesi Ini! 🚀",
+                body: bodyText
+            },
+            topic: "all_users"
+        };
+
+        // 5. Eksekusi Kirim!
+        await admin.messaging().send(message);
+        console.log(`📲 Notif Top 5 berhasil dikirim!`);
+
+    } catch (error) {
+        console.error("❌ Gagal generate notif Top 5:", error);
+    }
+}
+
+// ==========================================
+// CRON JOB KHUSUS NOTIFIKASI
+// ==========================================
+// Jalan jam 10:30 pagi (Sesi 1) dan 14:30 siang (Sesi 2), Senin - Jumat
+cron.schedule('0 10,11,12,14 * * 1-5', () => {
+    console.log("⏰ [CRON NOTIF] Memicu notifikasi radar (Sesi Jam Pas)...");
+    sendSmartScreenerNotif();
+});
+
+// 2. Jadwal khusus untuk jam 15:45 (Jelang Penutupan Market)
+cron.schedule('45 15 * * 1-5', () => {
+    console.log("⏰ [CRON NOTIF] Memicu notifikasi radar (Sesi 15:45)...");
+    sendSmartScreenerNotif();
 });
