@@ -2047,14 +2047,19 @@ app.delete('/api/comments/:id', optionalAuth, async (req, res) => {
         const hasChildren = await CommentModel.exists({ parent_id: commentId });
 
         if (hasChildren) {
-            // --- SKENARIO SOFT DELETE (Kalau punya anak) ---
-            comment.content = "[Komentar telah dihapus]";
-            comment.user_id = null; // Jadi anonim (atau biarin aja kalau mau tetep ada namanya)
-            // Opsional: kasih flag isDeleted = true
-            await comment.save();
+            await CommentModel.findByIdAndUpdate(
+                commentId,
+                {
+                    $set: {
+                        content: "[Komentar telah dihapus]",
+                        // TIPS PRO: Mending user_id jangan di-null-kan kalau dia required di Schema.
+                        // Sebagai gantinya, lu bisa nambahin flag penanda.
+                        is_deleted: true 
+                    }
+                }
+            );
             
             res.json({ status: "success", message: "Komentar disembunyikan (Soft Delete)" });
-
         } else {
             // --- SKENARIO HARD DELETE (Kalau jomblo) ---
             await CommentModel.deleteOne({ _id: commentId });
@@ -2392,17 +2397,18 @@ async function processIntradayUpdateAll() {
 
 // Jadwal Cron Job Intraday
 cron.schedule('*/15 09-16 * * 1-5', () => {
-    const now = new Date();
+    const jakartaTime = new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"});
+    const now = new Date(jakartaTime);
     const hari = now.getDay(); // 1 = Senin, ..., 5 = Jumat
     const jam = now.getHours();
-    const menit = now.getMinutes();
+    const menit = now.getMinutes();    
 
     // ==========================================
     // GERBANG PENJAGA 1: KHUSUS HARI JUMAT
     // Istirahat: 11:45 s/d 13:59
     // ==========================================
     if (hari === 5) {
-        if ((jam === 11 && menit >= 45) || jam === 12 || jam === 13) {
+        if ((jam === 11 && menit >= 45) || jam === 12 || jam === 13 || (jam === 14 && menit === 0)) {
             console.log(`⏸️ [JUMAT ${jam}:${menit}] Istirahat Jum'atan, skip narik data!`);
             return; // Berhenti di sini, jangan narik data
         }
@@ -2478,10 +2484,18 @@ async function sendSmartScreenerNotif() {
 cron.schedule('0 10,11,12,14 * * 1-5', () => {
     console.log("⏰ [CRON NOTIF] Memicu notifikasi radar (Sesi Jam Pas)...");
     sendSmartScreenerNotif();
+}, {
+    // 🔥 PENTING: Paksa pakai jam WIB
+    scheduled: true,
+    timezone: "Asia/Jakarta" 
 });
 
 // 2. Jadwal khusus untuk jam 15:45 (Jelang Penutupan Market)
 cron.schedule('45 15 * * 1-5', () => {
     console.log("⏰ [CRON NOTIF] Memicu notifikasi radar (Sesi 15:45)...");
     sendSmartScreenerNotif();
+}, {
+    // 🔥 PENTING: Paksa pakai jam WIB
+    scheduled: true,
+    timezone: "Asia/Jakarta" 
 });
