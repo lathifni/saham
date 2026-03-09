@@ -2400,7 +2400,7 @@ async function processIntradayUpdateAll() {
 }
 
 // Jadwal Cron Job Intraday
-cron.schedule('*/15 09d-16 * * 1-5', () => {
+cron.schedule('*/15 09-16 * * 1-5', () => {
     const jakartaTime = new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"});
     const now = new Date(jakartaTime);
     const hari = now.getDay(); // 1 = Senin, ..., 5 = Jumat
