@@ -340,17 +340,19 @@ function analyzeCandlesIntraday(history) {
     // Pastikan variabel result.is_big_money dan result.big_money_count terisi di sini
 
     let validBigMoneyCount = 0;
-    for (let i = history.length - 1; i > history.length - 11; i--) {
+    let stlBmTerakhir = null;
+    for (let i = history.length - 10; i < history.length; i++) {
         const curr = history[i];     
         const prev = history[i - 1]; 
         if (!prev) continue;
         const isGreen = curr.close > prev.close;
         const isFlatHigh = (curr.close === prev.close) && (curr.close === curr.high);
         const isBullish = isGreen || isFlatHigh;
-        const isVolSpike = curr.volume >= (prev.volume * 3);
+        const isVolSpike = curr.volume > 0 && curr.volume >= (prev.volume * 3);
 
         if (isBullish && isVolSpike) {
             const stl = calculateSTL(curr.low); 
+            stlBmTerakhir = stl;
             let isStillValid = true;
             for (let j = i + 1; j < history.length; j++) {
                 if (history[j].close < stl) {
@@ -361,7 +363,9 @@ function analyzeCandlesIntraday(history) {
             if (isStillValid) validBigMoneyCount++;
         }
     }
-    if (validBigMoneyCount >= 2) {
+    if (validBigMoneyCount >= 2 && stlBmTerakhir !== null && lastCandle.close >= stlBmTerakhir) {
+        console.log(validBigMoneyCount);
+        
         result.is_big_money = true;
         result.big_money_count = validBigMoneyCount;
     }
@@ -2396,7 +2400,7 @@ async function processIntradayUpdateAll() {
 }
 
 // Jadwal Cron Job Intraday
-cron.schedule('*/15 09-16 * * 1-5', () => {
+cron.schedule('*/15 09d-16 * * 1-5', () => {
     const jakartaTime = new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"});
     const now = new Date(jakartaTime);
     const hari = now.getDay(); // 1 = Senin, ..., 5 = Jumat
