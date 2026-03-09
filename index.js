@@ -2387,7 +2387,7 @@ async function processIntradayUpdateAll() {
                 { new: true }
             );
 
-            console.log(`⚡ ${ticker} | P: ${currentPrice} | Vol: ${currentVol} | Spike: ${volSpikeRatio}x`);
+            // console.log(`⚡ ${ticker} | P: ${currentPrice} | Vol: ${currentVol} | Spike: ${volSpikeRatio}x`);
 
         } catch (err) {
             console.error(`❌ Fail Intraday: ${ticker}`, err.message);
@@ -2403,6 +2403,8 @@ async function processIntradayUpdateAll() {
 cron.schedule('*/15 09-16 * * 1-5', () => {
     const jakartaTime = new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"});
     const now = new Date(jakartaTime);
+    console.log(now);
+    
     const hari = now.getDay(); // 1 = Senin, ..., 5 = Jumat
     const jam = now.getHours();
     const menit = now.getMinutes();    
