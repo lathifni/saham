@@ -363,9 +363,7 @@ function analyzeCandlesIntraday(history) {
             if (isStillValid) validBigMoneyCount++;
         }
     }
-    if (validBigMoneyCount >= 2 && stlBmTerakhir !== null && lastCandle.close >= stlBmTerakhir) {
-        console.log(validBigMoneyCount);
-        
+    if (validBigMoneyCount >= 2 && stlBmTerakhir !== null && lastCandle.close >= stlBmTerakhir) {      
         result.is_big_money = true;
         result.big_money_count = validBigMoneyCount;
     }
@@ -864,8 +862,8 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
 
     try {
         // 1. Cek Status Premium User
-        const isPremium = req.user ? req.user.is_premium : false;
-        console.log(`🔍 Request ${ticker} by ${req.user?.email || 'Guest'} (Premium: ${isPremium})`);
+        // const isPremium = req.user ? req.user.is_premium : false;
+        // console.log(`🔍 Request ${ticker} by ${req.user?.email || 'Guest'} (Premium: ${isPremium})`);
 
         // 2. Ambil Data dari DB
         const stockRaw = await StockModel.findOne({ symbol: symbol });
@@ -876,40 +874,40 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
         // 🔥 PENTING: Convert ke Plain Object biar bisa dimodifikasi
         let stock = stockRaw.toObject();
 
-        // 3. LOGIC SENSOR (-1 Strategy) 🔒
-        if (!isPremium) {
-            // Kita timpa object trading_plan dengan nilai -1
-            stock.trading_plan = {
-                status: "PREMIUM ONLY", 
-                action: "LOCKED",
+        // 3. LOGIC SENSOR (-1 Strategy) 🔒 KITA HIDE DULU
+        // if (!isPremium) {
+        //     // Kita timpa object trading_plan dengan nilai -1
+        //     stock.trading_plan = {
+        //         status: "PREMIUM ONLY", 
+        //         action: "LOCKED",
                 
-                // --- TIDAK RAWAN ---
-                pivot: -1,
-                tsp1: -1,
-                tsp2: -1,
-                tsp3: -1,
+        //         // --- TIDAK RAWAN ---
+        //         pivot: -1,
+        //         tsp1: -1,
+        //         tsp2: -1,
+        //         tsp3: -1,
                 
-                // --- 🔥 BAGIAN KRUSIAL (JANGAN SALAH KETIK) 🔥 ---
+        //         // --- 🔥 BAGIAN KRUSIAL (JANGAN SALAH KETIK) 🔥 ---
                 
-                // 1. Android minta @SerializedName("support_pertahanan")
-                support_pertahanan: -1,  // ✅ JANGAN supportPertahanan
+        //         // 1. Android minta @SerializedName("support_pertahanan")
+        //         support_pertahanan: -1,  // ✅ JANGAN supportPertahanan
 
-                // 2. Android minta @SerializedName("support_kuat")
-                support_kuat: -1,        // ✅ JANGAN supportKuat
+        //         // 2. Android minta @SerializedName("support_kuat")
+        //         support_kuat: -1,        // ✅ JANGAN supportKuat
                 
-                // 3. Android minta @SerializedName("support_awal")
-                support_awal: -1,        // ✅ JANGAN supportAwal
+        //         // 3. Android minta @SerializedName("support_awal")
+        //         support_awal: -1,        // ✅ JANGAN supportAwal
 
-                // 4. Android minta @SerializedName("best_entry")
-                best_entry: [-1, -1],    // ✅ JANGAN bestEntry (Ini biang kerok crashnya!)
+        //         // 4. Android minta @SerializedName("best_entry")
+        //         best_entry: [-1, -1],    // ✅ JANGAN bestEntry (Ini biang kerok crashnya!)
 
-                // 5. Android minta @SerializedName("avg_down")
-                avg_down: [-1]           // ✅ JANGAN avgDown
-            };
+        //         // 5. Android minta @SerializedName("avg_down")
+        //         avg_down: [-1]           // ✅ JANGAN avgDown
+        //     };
             
-            // Opsional: Kalau ownership mau disensor juga
-            // stock.ownership = []; 
-        }
+        //     // Opsional: Kalau ownership mau disensor juga
+        //     // stock.ownership = []; 
+        // }
 
         // 4. Kirim Response (Struktur JSON Tetap Sama)
         res.json({
@@ -939,7 +937,8 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
             ownership: stock.ownership,
             
             // Flag tambahan buat Android tau user ini statusnya apa (opsional tapi berguna)
-            is_locked: !isPremium 
+            // is_locked: !isPremium 
+            is_locked: false 
         });
 
     } catch (error) {
