@@ -2811,4 +2811,4 @@ cron.schedule('45 15 * * 1-5', () => {
 //         await processSectorUpdate(sector);
 //     }
 
-processIntradayUpdateAll()
+// processIntradayUpdateAll()
