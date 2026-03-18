@@ -270,7 +270,7 @@ function analyzeCandles(history) {
     const MIN_TRANSACTION_BIG = 700000000; // 700 Juta
     const isTodayGreen = lastCandle.close > prevCandle.close;
     const isTodayFlatHigh = (lastCandle.close === prevCandle.close) && (lastCandle.close === lastCandle.high);
-    const isTodayBullish = isTodayGreen || isTodayFlatHigh;
+    const isTodayBullish = result.change_pct > 10
 
     if (lastCandle.close > 50) {
         const isTodayVolSpikeBig = lastCandle.volume > 0 && lastCandle.volume > (prevCandle.volume * 1);
@@ -533,7 +533,8 @@ function analyzeCandlesIntraday(history) {
     const MIN_TRANSACTION_BIG = 700000000; // 700 Juta
     const isTodayGreen = lastCandle.close > prevCandle.close;
     const isTodayFlatHigh = (lastCandle.close === prevCandle.close) && (lastCandle.close === lastCandle.high);
-    const isTodayBullish = isTodayGreen || isTodayFlatHigh;
+    // const isTodayBullish = isTodayGreen || isTodayFlatHigh;
+    const isTodayBullish = result.change_pct > 10
 
     if (lastCandle.close > 50) {
         const isTodayVolSpikeBig = lastCandle.volume > 0 && lastCandle.volume > (prevCandle.volume * 1);
