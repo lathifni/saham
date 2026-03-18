@@ -494,7 +494,6 @@ function analyzeCandlesIntraday(history) {
     let result = {
         // Status Flags
         is_big_money: false,
-        big_money_count: 0,
         is_small_accum: false,
 
         // Data Penting buat Sorting/Ranking di DB
@@ -2125,6 +2124,14 @@ app.get('/api/screener', async (req, res) => {
             // Tips: Bisa sort berdasarkan Volume Spike atau Change Pct
             // sortCriteria = { "screener.vol_spike_ratio": -1 }; // Opsional
             
+        } else if (typeParam === 'big2w') {
+            dbQueryFilter = { "screener.big_money_count": { $gt: 1 } };
+            sortCriteria = { "screener.big_money_count": -1, avgVol10day: -1 };
+
+        } else if (typeParam === 'small2w') {
+            dbQueryFilter = { "screener.small_money_count": { $gt: 1 } }; // Pastikan field di DB namanya ini ya
+            sortCriteria = { "screener.small_money_count": -1, avgVol10day: -1 }
+
         } else {
             // --- DEFAULT: BIG ACCUM ---
             dbQueryFilter = { "screener.is_big_money": true };
@@ -2146,6 +2153,7 @@ app.get('/api/screener', async (req, res) => {
             
             // --- LOGIKA LABELING ---
             let screenerLabel = "";
+            let accumCount = undefined; // 🔥 Siapkan variabel kosong
 
             if (typeParam === 'scalping') {
                 screenerLabel = index < 5 ? "Day Trade" : "Scalping";
@@ -2154,11 +2162,20 @@ app.get('/api/screener', async (req, res) => {
                 // 🔥 LABEL BARU
                 screenerLabel = "Sleeping Giant"; 
 
+            } else if (typeParam === 'big2w') {
+                accumCount = obj.screener?.big_money_count || 0;
+                screenerLabel = "Big Accum 2W"; // Teks label bisa dibikin bersih
+
+            } else if (typeParam === 'small2w') {
+                accumCount = obj.screener?.small_money_count || 0;
+                screenerLabel = "Small Accum 2W";
+
+            // (Opsional) Tambahin kalau kamu pakai filter one_years_up
             } else {
                 // Label Default
                 if (obj.screener?.is_big_money) screenerLabel = "Big Accum";
                 else if (obj.screener?.is_small_accum) screenerLabel = "Small Accum";
-            }
+            } 
 
             // Bersihkan changePct (Code lama kamu)
             let cleanPct = 0.0;
@@ -2167,19 +2184,24 @@ app.get('/api/screener', async (req, res) => {
             } else if (typeof obj.changePct === 'number') {
                 cleanPct = obj.changePct;
             }
-
-            return {
+            const responseData = {
                 symbol: obj.symbol.replace('.JK', ''),
                 name: obj.company || "", 
                 close: obj.close,
                 change: obj.change,
                 changePct: cleanPct,
                 volume: obj.volume,
-                screener: screenerLabel,
-                
-                // Optional: Kalau mau nampilin detail di Android
-                // return_setahun: obj.screener?.one_year_return 
+                screener: screenerLabel
             };
+
+            // 🔥 LOGIC INJECT ATRIBUT:
+            // Hanya kalau accumCount terisi (artinya user milih big2w/small2w), 
+            // kita tambahkan atribut 'count' ke dalam responseData
+            if (accumCount !== undefined) {
+                responseData.count = accumCount; 
+            }
+
+            return responseData;
         });
 
         // 5. SIMPAN CACHE & RETURN
