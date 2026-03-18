@@ -238,8 +238,8 @@ function analyzeCandles(history) {
     // Validasi data (Min 12 candle)
     if (!history || history.length < 12) return result;
 
-    const lastCandle = history[history.length - 1];
-    const prevCandle = history[history.length - 2];
+    const lastCandle = history[history.length - 2];
+    const prevCandle = history[history.length - 3];
     
     // Set Data Dasar
     result.last_price = lastCandle.close;
@@ -408,7 +408,7 @@ function analyzeCandles(history) {
 
     return result;
 }
-function analyzeCandlesIntraday(history) {
+function analyzeCandlesIntradayLAMAAAAAA(history) {
     let result = {
         // Status Flags
         is_big_money: false,
@@ -424,10 +424,10 @@ function analyzeCandlesIntraday(history) {
     };
 
     // Validasi data (Min 12 candle)    
-    if (!history || history.length < 12) return result;
+    if (!history || history.length < 13) return result;
 
-    const lastCandle = history[history.length - 1];
-    const prevCandle = history[history.length - 2];
+    const lastCandle = history[history.length - 2];
+    const prevCandle = history[history.length - 3];   
     
     // Set Data Dasar
     result.last_price = lastCandle.close;
@@ -437,6 +437,7 @@ function analyzeCandlesIntraday(history) {
 
     // 0. LOGIC AVG VALUE (11 Hari)
     const last11 = history.slice(-11);
+    
     const totalValue11 = last11.reduce((acc, c) => acc + (c.close * (c.volume || 0)), 0);
     result.avg_value_transaction = Math.floor(totalValue11 / last11.length);
 
@@ -485,6 +486,107 @@ function analyzeCandlesIntraday(history) {
         if (isPriceRangeMasuk && isVolNaik) {
             result.is_small_accum = true;
         }
+    }
+
+    return result;
+}
+function analyzeCandlesIntraday(history) {
+    let result = {
+        // Status Flags
+        is_big_money: false,
+        big_money_count: 0,
+        is_small_accum: false,
+
+        // Data Penting buat Sorting/Ranking di DB
+        last_price: 0,
+        prev_price: 0,
+        change_pct: 0.0,       // Buat sort Top Gainers
+        total_value_today: 0,  // Buat sort Liquidity (Ranking)
+        avg_value_transaction: 0 
+    };
+
+    // Validasi data (Min 12 candle)    
+    // Validasi data (Min 12 candle)
+    if (!history || history.length < 5) return result;
+
+    const lastCandle = history[history.length - 2];
+    const prevCandle = history[history.length - 3];
+    
+    // Set Data Dasar
+    result.last_price = lastCandle.close;
+    result.prev_price = prevCandle.close;
+    result.change_pct = ((lastCandle.close - prevCandle.close) / prevCandle.close) * 100;
+    result.total_value_today = lastCandle.close * lastCandle.volume;
+
+    // 0. LOGIC AVG VALUE (11 Hari)
+    const last11 = history.slice(-11);
+    const totalValue11 = last11.reduce((acc, c) => acc + (c.close * (c.volume || 0)), 0);
+    result.avg_value_transaction = Math.floor(totalValue11 / last11.length);
+
+    // ============================================================
+    // 1. LOGIC BIG ACCUMULATION (Scanner 10 Hari)
+    // ============================================================
+    // ... (KODE LOGIC BIG ACCUM YANG SUDAH KITA BUAT SEBELUMNYA - COPAS AJA) ...
+    // Pastikan variabel result.is_big_money dan result.big_money_count terisi di sini
+
+    // "Satpam" di awal: Boleh ngecek Big / Small nggak?
+    const MIN_TRANSACTION_SMALL = 300000000; // 300 Juta
+    const MIN_TRANSACTION_BIG = 700000000; // 700 Juta
+    const isTodayGreen = lastCandle.close > prevCandle.close;
+    const isTodayFlatHigh = (lastCandle.close === prevCandle.close) && (lastCandle.close === lastCandle.high);
+    const isTodayBullish = isTodayGreen || isTodayFlatHigh;
+
+    if (lastCandle.close > 50) {
+        const isTodayVolSpikeBig = lastCandle.volume > 0 && lastCandle.volume > (prevCandle.volume * 1);
+        if (isTodayBullish && isTodayVolSpikeBig && result.total_value_today > MIN_TRANSACTION_BIG) {
+            result.is_big_money = true;
+        }
+    }
+
+    // B. Cek Status Small Accumulation Hari Ini
+    if (lastCandle.close > 55) {
+        const isTodayVolSpikeSmall = lastCandle.volume > (prevCandle.volume * 1.5);
+        const isTodayPriceRange = result.change_pct > 2 && result.change_pct < 5;
+        if (isTodayPriceRange && isTodayVolSpikeSmall && result.total_value_today >= MIN_TRANSACTION_SMALL) {
+            result.is_small_accum = true;
+        }
+    }
+
+    // ============================================================
+    // 2. LOGIC SMALL ACCUMULATION
+    // ============================================================
+    // const MIN_TRANSACTION_SMALL = 100000000; // 100 Juta
+    // if (result.total_value_today >= MIN_TRANSACTION_SMALL && lastCandle.close > 55) {
+    //     const isPriceRangeMasuk = result.change_pct > 2 && result.change_pct < 5;
+    //     const isVolNaik = lastCandle.volume > (prevCandle.volume * 1.5);
+    //     if (isPriceRangeMasuk && isVolNaik) {
+    //         result.is_small_accum = true;
+    //         if (validBigMoneyCount >= 2) {
+    //             result.is_big_money = true;
+    //             result.big_money_count = validBigMoneyCount;
+    //         }
+    //     }
+    // }
+
+    // ============================================================
+    // 3. LOGIC SCALPING / DAY TRADE (NEW) 🔥
+    // ============================================================
+    // Syarat:
+    // a. Harga > 50
+    // b. Naik > 10%
+    // c. Vol Hari Ini > Vol Kemarin
+    // d. Value Transaksi > 700 Juta
+    
+    const MIN_TRANSACTION_SCALP = 700000000; // 700 Juta
+
+    const condPrice = lastCandle.close > 50;
+    const condGain = result.change_pct > 10;
+    
+    const condVol = lastCandle.volume > prevCandle.volume;
+    const condValue = result.total_value_today > MIN_TRANSACTION_SCALP;    
+
+    if (condPrice && condGain && condVol && condValue) {        
+        result.is_scalping = true;
     }
 
     return result;
@@ -2686,4 +2788,4 @@ cron.schedule('45 15 * * 1-5', () => {
 //         await processSectorUpdate(sector);
 //     }
 
-// processIntradayUpdateAll()
+processIntradayUpdateAll()
