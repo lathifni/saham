@@ -72,6 +72,7 @@ const StockSchema = new mongoose.Schema({
     screener: {
         is_big_money: { type: Boolean, default: false },
         big_money_count: { type: Number, default: 0 },
+        small_money_count: { type: Number, default: 0 },
         is_small_accum: { type: Boolean, default: false },
         is_scalping: { type: Boolean, default: false },
 

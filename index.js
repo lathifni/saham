@@ -44,6 +44,8 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
+    // "BASIC_INDUSTRIAL":["MTEL"
+    // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
         "BRPT", "BTON", "CITA", "CLPI", "CTBN", "DKFT", "DPNS", "EKAD", "ESSA", "ETWA", 
@@ -232,7 +234,7 @@ function analyzeCandles(history) {
         total_value_today: 0,  // Buat sort Liquidity (Ranking)
         avg_value_transaction: 0 
     };
-
+    
     // Validasi data (Min 12 candle)
     if (!history || history.length < 12) return result;
 
@@ -257,43 +259,131 @@ function analyzeCandles(history) {
     // Pastikan variabel result.is_big_money dan result.big_money_count terisi di sini
 
     let validBigMoneyCount = 0;
-    for (let i = history.length - 1; i > history.length - 11; i--) {
-        const curr = history[i];     
-        const prev = history[i - 1]; 
-        if (!prev) continue;
-        const isGreen = curr.close > prev.close;
-        const isFlatHigh = (curr.close === prev.close) && (curr.close === curr.high);
-        const isBullish = isGreen || isFlatHigh;
-        const isVolSpike = curr.volume >= (prev.volume * 3);
+    let validSmallMoneyCount = 0; // Tambahan buat ngitung berapa kali small accum terjadi
+    let stlBmTerakhir = null;
+    let stlSmTerakhir = null;
 
-        if (isBullish && isVolSpike) {
-            const stl = calculateSTL(curr.low); 
-            let isStillValid = true;
-            for (let j = i + 1; j < history.length; j++) {
-                if (history[j].close < stl) {
-                    isStillValid = false;
-                    break; 
-                }
-            }
-            if (isStillValid) validBigMoneyCount++;
+    // "Satpam" di awal: Boleh ngecek Big / Small nggak?
+    const canCheckBig = lastCandle.close > 50;
+    const canCheckSmall = lastCandle.close > 55;
+    const MIN_TRANSACTION_SMALL = 300000000; // 300 Juta
+    const MIN_TRANSACTION_BIG = 700000000; // 700 Juta
+    const isTodayGreen = lastCandle.close > prevCandle.close;
+    const isTodayFlatHigh = (lastCandle.close === prevCandle.close) && (lastCandle.close === lastCandle.high);
+    const isTodayBullish = isTodayGreen || isTodayFlatHigh;
+
+    if (lastCandle.close > 50) {
+        const isTodayVolSpikeBig = lastCandle.volume > 0 && lastCandle.volume > (prevCandle.volume * 1);
+        if (isTodayBullish && isTodayVolSpikeBig && result.total_value_today > MIN_TRANSACTION_BIG) {
+            result.is_big_money = true;
         }
     }
-    if (validBigMoneyCount >= 2) {
-        result.is_big_money = true;
-        result.big_money_count = validBigMoneyCount;
+
+    // B. Cek Status Small Accumulation Hari Ini
+    if (lastCandle.close > 55) {
+        const isTodayVolSpikeSmall = lastCandle.volume > (prevCandle.volume * 1.5);
+        const isTodayPriceRange = result.change_pct > 2 && result.change_pct < 5;
+        if (isTodayPriceRange && isTodayVolSpikeSmall && result.total_value_today >= MIN_TRANSACTION_SMALL) {
+            result.is_small_accum = true;
+        }
+    }
+
+    // Kalau minimal masuk salah satu syarat harga, baru kita jalankan loop 10 hari
+    if (canCheckBig || canCheckSmall) {
+        for (let i = history.length - 10; i < history.length; i++) {
+            const curr = history[i];     
+            const prev = history[i - 1]; 
+            if (!prev) continue;
+            
+            // --- DATA UMUM CANDLE HARI ITU ---
+            const isGreen = curr.close > prev.close;
+            const isFlatHigh = (curr.close === prev.close) && (curr.close === curr.high);
+            const isBullish = isGreen || isFlatHigh;
+            
+            // Hitung change_pct & transaksi KHUSUS untuk candle hari (i) ini
+            const currChangePct = ((curr.close - prev.close) / prev.close) * 100;
+            const currTotalValue = curr.close * (curr.volume || 0);
+
+            // ----------------------------------------------------
+            // 1. CEK BIG ACCUMULATION (Syarat Harga > 50)
+            // ----------------------------------------------------
+            if (canCheckBig) {
+                const isVolSpikeBig = curr.volume > 0 && curr.volume > (prev.volume * 1);
+
+                if (isBullish && isVolSpikeBig && currTotalValue > MIN_TRANSACTION_BIG) {
+                    const stl = calculateSTL(curr.low);
+                    stlBmTerakhir = stl;
+                    let isStillValid = true;
+                    
+                    for (let j = i + 1; j < history.length; j++) {
+                        if (history[j].close < stl) {
+                            isStillValid = false;
+                            break; 
+                        }
+                    }
+                    if (isStillValid) validBigMoneyCount++;
+                }
+            }
+
+            // ----------------------------------------------------
+            // 2. CEK SMALL ACCUMULATION (Syarat Harga > 55)
+            // ----------------------------------------------------
+            if (canCheckSmall) {
+                const isVolSpikeSmall = curr.volume > (prev.volume * 1.5);
+                const isPriceRangeMasuk = currChangePct > 2 && currChangePct < 5;
+                
+                // Cek syarat Small Accum di candle hari (i) ini
+                if (isPriceRangeMasuk && isVolSpikeSmall && currTotalValue >= MIN_TRANSACTION_SMALL) {
+                    const stl = calculateSTL(curr.low); // Hitung STL di sini aja biar hemat
+                    let isStillValid = true;
+                    
+                    // Cek hari-hari setelahnya, apakah harganya jebol ke bawah STL?
+                    for (let j = i + 1; j < history.length; j++) {
+                        if (history[j].close < stl) {
+                            isStillValid = false;
+                            break; 
+                        }
+                    }
+
+                    // Kalau sampai hari ini harga masih bertahan di atas STL, baru dihitung valid
+                    if (isStillValid) validSmallMoneyCount++;
+                }
+            }
+        }
+
+        // ============================================================
+        // HASIL AKHIR SETELAH LOOPING SELESAI
+        // ============================================================
+        
+        // Eksekusi Result Big Money
+        if (validBigMoneyCount >= 2) {
+            result.is_big_money = true;
+            result.big_money_count = validBigMoneyCount;
+        }
+
+        // Eksekusi Result Small Money (misal kita anggap valid kalau minimal 1 atau 2 kali terjadi)
+        if (validSmallMoneyCount > 0) { 
+            result.is_small_accum = true;
+            result.small_money_count = validSmallMoneyCount
+            // opsional: result.small_money_count = validSmallMoneyCount; kalau mau disimpen ke DB
+        }
     }
 
     // ============================================================
     // 2. LOGIC SMALL ACCUMULATION
     // ============================================================
-    const MIN_TRANSACTION_SMALL = 100000000; // 100 Juta
-    if (result.total_value_today >= MIN_TRANSACTION_SMALL) {
-        const isPriceRangeMasuk = result.change_pct >= 2 && result.change_pct <= 5;
-        const isVolNaik = lastCandle.volume >= (prevCandle.volume * 1.5);
-        if (isPriceRangeMasuk && isVolNaik) {
-            result.is_small_accum = true;
-        }
-    }
+    // const MIN_TRANSACTION_SMALL = 100000000; // 100 Juta
+    // if (result.total_value_today >= MIN_TRANSACTION_SMALL && lastCandle.close > 55) {
+    //     const isPriceRangeMasuk = result.change_pct > 2 && result.change_pct < 5;
+    //     const isVolNaik = lastCandle.volume > (prevCandle.volume * 1.5);
+    //     if (isPriceRangeMasuk && isVolNaik) {
+    //         result.is_small_accum = true;
+    //         if (validBigMoneyCount >= 2) {
+    //             result.is_big_money = true;
+    //             result.big_money_count = validBigMoneyCount;
+    //         }
+    //     }
+    // }
 
     // ============================================================
     // 3. LOGIC SCALPING / DAY TRADE (NEW) 🔥
@@ -1926,8 +2016,7 @@ app.get('/api/screener', async (req, res) => {
             // --- LOGIC SMALL ACCUM ---
             dbQueryFilter = { "screener.is_small_accum": true };
 
-        } else if (typeParam === 'sleeping') { 
-            // 🔥 LOGIC BARU: SLEEPING GIANT ---
+        } else if (typeParam === 'one_years_up') { 
             // Cari yang flag 'one_years_up' nya TRUE
             dbQueryFilter = { "screener.one_years_up": true };
             
@@ -2104,26 +2193,87 @@ async function processSectorUpdate(sectorName) {
 
     const stockList = SECTOR_MAP[sectorName.toUpperCase()];
     const today = new Date();
+    // const period2 = today.toISOString().split('T')[0];
     
+    // const startDate = new Date();
+    // startDate.setDate(today.getDate() - 365); 
+
     const startDate = new Date();
     startDate.setDate(today.getDate() - 365); 
+    const period1 = startDate.toISOString().split('T')[0]; // Hasil: "2025-03-17"
+
+    // // Set Kemarin
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+    const period2 = yesterday.toISOString().split('T')[0]; // Hasil: "2026-03-16"
 
     for (const ticker of stockList) {
         const symbol = ticker + ".JK";
-        try {
+        try {            
                 // --- STEP 1: TARIK DATA ---
                 const [quoteResult, historyResult] = await Promise.all([
                     yahooFinance.quoteSummary(symbol, {
                         modules: ["price", "summaryDetail", "defaultKeyStatistics"]
-                    }).catch(e => null),
+                    }).catch(e => {
+                        // Jangan didiamkan, kita log biar tahu kalau ada error beneran
+                        console.error(`⚠️ Gagal narik quoteResult ${ticker}:`, e.message);
+                        return null;
+                    }),
                     
                     // Tarik history 1 tahun ke belakang
-                    yahooFinance.historical(symbol, { 
+                    yahooFinance.historical(symbol, {
+                        // period1: period1,
+                        // period2: period2,
+                        // interval: '1d'
                         period1: startDate, 
                         period2: new Date(),
                         interval: '1d' 
-                    }).catch(e => [])
-                ]);                
+                    }).catch(e => {
+                        // Jangan didiamkan, kita log biar tahu kalau ada error beneran
+                        console.error(`⚠️ Gagal narik history ${ticker}:`, e.message);
+                        return [];
+                    })
+                ]);
+                // console.log('ini historyResult',quoteResult);
+                // const period2 = Math.floor(Date.now() / 1000); // Hari ini
+                // const period1 = period2 - (12 * 30 * 24 * 60 * 60); // 6 Bulan lalu
+
+                // // URL Resmi Yahoo yang kamu kasih tadi
+                // const url = `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${period1}&period2=${period2}&interval=1d&events=history`;
+                
+                // // 🔥 INI KUNCINYA: Headers biar dikira Browser 🔥
+                // const response = await fetch(url, {
+                //     headers: {
+                //         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                //         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                //         "Accept-Language": "en-US,en;q=0.5"
+                //     }
+                // });
+
+                // if (!response.ok) {
+                //     throw new Error(`Yahoo menolak: ${response.status} ${response.statusText}`);
+                // }
+
+                // const data = await response.json();
+                // const result = data.chart.result[0];
+                // const timestamps = result.timestamp;
+                // const quotes = result.indicators.quote[0];
+
+                // // Mapping Manual Data Yahoo ke Format Kamu
+                // const chartData = timestamps.map((time, index) => ({
+                //     time: new Date(time * 1000).toISOString().split('T')[0], // Convert Unix ke YYYY-MM-DD
+                //     open: quotes.open[index],
+                //     high: quotes.high[index],
+                //     low: quotes.low[index],
+                //     close: quotes.close[index],
+                //     volume: quotes.volume[index] || 0
+                //     // open: quotes.open[index] ? Math.round(quotes.open[index]) : null,
+                //     // high: quotes.high[index] ? Math.round(quotes.high[index]) : null,
+                //     // low: quotes.low[index] ? Math.round(quotes.low[index]) : null,
+                //     // close: quotes.close[index] ? Math.round(quotes.close[index]) : null
+                // })).filter(item => item.close != null); // Filter data null (error yahoo)
+                // console.log(chartData);
+                         
 
                 if (!quoteResult || !quoteResult.price || !quoteResult.price.regularMarketPrice) {
                     console.log(`⚠️ Skip ${ticker}: Data corrupt.`);
@@ -2145,6 +2295,7 @@ async function processSectorUpdate(sectorName) {
                 );
 
                 const screenerStats = analyzeCandles(historyResult);
+                
                 const toPercent = (val) => val ? (val * 100).toFixed(2) + "%" : "-";
                 const toX = (val) => val ? val.toFixed(2) + "x" : "-";
                 const toDec = (val) => val ? val.toFixed(2) : "-";
@@ -2156,13 +2307,13 @@ async function processSectorUpdate(sectorName) {
                 
                 let oneYearReturnPct = 0;
                 if (historyResult.length > 0) {
-                    const price1YearAgo = historyResult[0].close;
+                    const price1YearAgo = historyResult[0].close;                    
                     if (price1YearAgo > 0) {
                         oneYearReturnPct = ((currentPrice - price1YearAgo) / price1YearAgo) * 100;
                     }
                 }
                 oneYearReturnPct = parseFloat(oneYearReturnPct.toFixed(2));
-
+                
                 // --- LOGIC BARU SESUAI REQUEST ---
                 
                 // A. Data Pendukung
@@ -2170,14 +2321,15 @@ async function processSectorUpdate(sectorName) {
                 const prevClosePrice = priceData.regularMarketPreviousClose;
                 
                 // Ambil Volume Kemarin (H-1) dari history
-                // Kita ambil index ke-2 dari belakang untuk aman (jaga-jaga kalau index terakhir itu data hari ini yang belum close)
-                const prevCandle = historyResult.length >= 2 ? historyResult[historyResult.length - 2] : null;
-                const prevVol = prevCandle ? prevCandle.volume : currentVol; // Fallback kalau data kurang
+                // Kita ambil index ke-3 dari belakang untuk aman index -1 & -2 masih last daily so ambil -3 yang yesterday nya
+                const prevCandle = historyResult.length >= 3 ? historyResult[historyResult.length - 3] : null;
+                
+                const prevVol = prevCandle ? prevCandle.volume : 0; // Fallback kalau data kurang
 
                 // B. Pengecekan Syarat (Satu per satu)
                 
                 // Syarat 1: Vol > 1.5x Volume Sebelumnya
-                const condVolSpike = currentVol > (1.5 * prevVol);
+                const condVolSpike = currentVol > (1.5 * prevVol);                
                 
                 // Syarat 2: Price > 55
                 const condPrice55 = currentPrice > 55;
@@ -2199,7 +2351,7 @@ async function processSectorUpdate(sectorName) {
                 // Semua syarat harus TRUE
                 const isMatchScreener = condVolSpike && condPrice55 && condGreen && condLiquid && condSleeping && condAboveMA20;
 
-                // --- STEP 4: SIMPAN KE DB ---
+                //--- STEP 4: SIMPAN KE DB ---
                 await StockModel.findOneAndUpdate(
                     { symbol: symbol },
                     {
@@ -2252,6 +2404,7 @@ async function processSectorUpdate(sectorName) {
                             is_big_money: screenerStats.is_big_money,
                             big_money_count: screenerStats.big_money_count,
                             is_small_accum: screenerStats.is_small_accum,
+                            small_money_count: screenerStats.small_money_count,
                             is_scalping: screenerStats.is_scalping, // <--- JANGAN LUPA INI!
 
                             // 2. Data Ranking (PENTING BUAT SORTING API)
@@ -2353,9 +2506,13 @@ async function processIntradayUpdateAll() {
                     period1: startDate, 
                     period2: new Date(),
                     interval: '1d' 
-                }).catch(e => [])
-            ]);                
-
+                }).catch(e => {
+                    // Jangan didiamkan, kita log biar tahu kalau ada error beneran
+                    console.error(`⚠️ Gagal narik history intraday ${ticker}:`, e.message);
+                    return [];
+                })
+            ]);
+            
             if (!quoteResult || !quoteResult.regularMarketPrice) {
                 continue; // Skip kalau data bolong
             }
@@ -2368,7 +2525,8 @@ async function processIntradayUpdateAll() {
             const screenerStats = analyzeCandlesIntraday(historyResult);
             
             // Ambil Volume H-1 dari history buat nyari Spike
-            const prevCandle = historyResult.length >= 2 ? historyResult[historyResult.length - 2] : null;
+            const prevCandle = historyResult.length >= 3 ? historyResult[historyResult.length - 3] : null;
+            
             const prevVol = prevCandle ? prevCandle.volume : currentVol; 
             
             const transactionValue = currentPrice * currentVol;
@@ -2520,3 +2678,12 @@ cron.schedule('45 15 * * 1-5', () => {
     scheduled: true,
     timezone: "Asia/Jakarta" 
 });
+
+// const allSectors = Object.keys(SECTOR_MAP); // Ambil semua nama sektor (FINANCE, BASIC, dll)
+    
+//     // Looping untuk update SEMUA sektor satu per satu
+//     for (const sector of allSectors) {
+//         await processSectorUpdate(sector);
+//     }
+
+// processIntradayUpdateAll()
