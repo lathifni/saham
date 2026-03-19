@@ -2742,12 +2742,12 @@ async function sendSmartScreenerNotif() {
         // 1. Cari Top 5 Big Accum (Urutkan dari transaksi paling gede)
         const topBigAccum = await StockModel.find({ "screener.is_big_money": true })
             .sort({ "screener.total_value_today": -1 })
-            .limit(5);
+            .limit(7);
 
         // 2. Cari Top 5 Small Accum (Urutkan dari transaksi paling gede)
         const topSmallAccum = await StockModel.find({ "screener.is_small_accum": true })
             .sort({ "screener.total_value_today": -1 })
-            .limit(5);
+            .limit(7);
 
         // Kalau market lagi sepi dan gak ada data sama sekali, jangan kirim notif
         if (topBigAccum.length === 0 && topSmallAccum.length === 0) {
@@ -2756,12 +2756,12 @@ async function sendSmartScreenerNotif() {
         }
 
         // 3. Rangkai Teks Notifikasinya (Pake .map biar otomatis jadi koma-komaan)
-        const bigNames = topBigAccum.map(s => s.symbol.replace(".JK", "")).join(", ");
-        const smallNames = topSmallAccum.map(s => s.symbol.replace(".JK", "")).join(", ");
+        const bigNames = topBigAccum.map(s => s.symbol.replace(".JK", "")).join(",");
+        const smallNames = topSmallAccum.map(s => s.symbol.replace(".JK", "")).join(",");
 
         let bodyText = "";
-        if (bigNames) bodyText += `🔥 Big Accum: ${bigNames}\n`;
-        if (smallNames) bodyText += `💎 Small Accum: ${smallNames}`;
+        if (bigNames) bodyText += `🔥Big Accum: ${bigNames}\n`;
+        if (smallNames) bodyText += `💎Small Accum: ${smallNames}`;
 
         // 4. Siapkan Payload Firebase
         const message = {
@@ -2774,8 +2774,6 @@ async function sendSmartScreenerNotif() {
 
         // 5. Eksekusi Kirim!
         await admin.messaging().send(message);
-        console.log(`📲 Notif Top 5 berhasil dikirim!`);
-
     } catch (error) {
         console.error("❌ Gagal generate notif Top 5:", error);
     }
@@ -2812,3 +2810,4 @@ cron.schedule('45 15 * * 1-5', () => {
 //     }
 
 // processIntradayUpdateAll()
+// sendSmartScreenerNotif();

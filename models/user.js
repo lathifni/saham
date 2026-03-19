@@ -33,6 +33,11 @@ const UserSchema = new mongoose.Schema({
         default: false 
     },
 
+    is_admin: { 
+        type: Boolean, 
+        default: false // Default semua user baru adalah non-admin
+    },
+
     // 📱 KEAMANAN (Opsional, Future Proof)
     // Bisa buat ngecek "User ini login pakai HP apa aja?"
     registered_devices: [{
