@@ -2667,32 +2667,32 @@ async function processIntradayUpdateAll() {
             
 
             // --- STEP 3: UPDATE KE DB ---
-            // await StockModel.findOneAndUpdate(
-            //     { symbol: symbol }, // Cari pakai yang ada .JK-nya
-            //     {
-            //         $set: {
-            //             open: quoteResult.regularMarketOpen,
-            //             high: quoteResult.regularMarketDayHigh,
-            //             low: quoteResult.regularMarketDayLow,
-            //             close: currentPrice,
-            //             change: quoteResult.regularMarketChange,
-            //             changePct: quoteResult.regularMarketChangePercent 
-            //                 ? parseFloat((quoteResult.regularMarketChangePercent).toFixed(2)) 
-            //                 : 0,
-            //             volume: currentVol,
-            //             previousClose: prevClosePrice,
-            //             "screener.is_big_money": screenerStats.is_big_money,
-            //             "screener.big_money_count": screenerStats.big_money_count,
-            //             "screener.is_small_accum": screenerStats.is_small_accum,
-            //             "screener.total_value_today": transactionValue,
-            //             "screener.tx_value": transactionValue,
-            //             "screener.change_pct": quoteResult.regularMarketChangePercent,
-            //             "screener.vol_spike_ratio": volSpikeRatio,
-            //             "screener.last_updated": new Date()
-            //         }
-            //     },
-            //     { new: true }
-            // );
+            await StockModel.findOneAndUpdate(
+                { symbol: symbol }, // Cari pakai yang ada .JK-nya
+                {
+                    $set: {
+                        open: quoteResult.regularMarketOpen,
+                        high: quoteResult.regularMarketDayHigh,
+                        low: quoteResult.regularMarketDayLow,
+                        close: currentPrice,
+                        change: quoteResult.regularMarketChange,
+                        changePct: quoteResult.regularMarketChangePercent 
+                            ? parseFloat((quoteResult.regularMarketChangePercent).toFixed(2)) 
+                            : 0,
+                        volume: currentVol,
+                        previousClose: prevClosePrice,
+                        "screener.is_big_money": screenerStats.is_big_money,
+                        "screener.big_money_count": screenerStats.big_money_count,
+                        "screener.is_small_accum": screenerStats.is_small_accum,
+                        "screener.total_value_today": transactionValue,
+                        "screener.tx_value": transactionValue,
+                        "screener.change_pct": quoteResult.regularMarketChangePercent,
+                        "screener.vol_spike_ratio": volSpikeRatio,
+                        "screener.last_updated": new Date()
+                    }
+                },
+                { new: true }
+            );
 
             // console.log(`⚡ ${ticker} | P: ${currentPrice} | Vol: ${currentVol} | Spike: ${volSpikeRatio}x`);
 
