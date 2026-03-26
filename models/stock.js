@@ -69,24 +69,24 @@ const StockSchema = new mongoose.Schema({
         rekomendasi: String
     },
 
-    smart_money_map: {
-        jenis: String,
-        SAV: Number,
-        support_pertahanan: Number,
-        support_kuat: Number,
-        support_awal: Number,
-        STL: Number,
-        TSP1: Number,
-        TSP2: Number,
-        TSP3: Number,
-        TBP1: Number,
-    },
+    // smart_money_map: {
+    //     jenis: String,
+    //     SAV: Number,
+    //     support_pertahanan: Number,
+    //     support_kuat: Number,
+    //     support_awal: Number,
+    //     STL: Number,
+    //     TSP1: Number,
+    //     TSP2: Number,
+    //     TSP3: Number,
+    //     TBP1: Number,
+    // },
 
-    reaccum_plan: {
-        reaccum1: [Number],default:null,
-        reaccum2: [Number],default:null,
-        reaccum3: [Number],default:null,
-    },
+    // reaccum_plan: {
+    //     reaccum1: [Number],default:null,
+    //     reaccum2: [Number],default:null,
+    //     reaccum3: [Number],default:null,
+    // },
 
     screener: {
         is_big_money: { type: Boolean, default: false },
