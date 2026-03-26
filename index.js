@@ -45,7 +45,7 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
     // "BUVA", "SOCI", "GEMS", "BSSR"
-    // "BASIC_INDUSTRIAL":["RAJA", 
+    // "BASIC_INDUSTRIAL":["SOTS",
     // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
@@ -509,13 +509,31 @@ function analyzeCandlesIntraday(history) {
     // Validasi data (Min 12 candle)
     if (!history || history.length < 5) return result;
 
-    const lastCandle = history[history.length - 1];
-    const prevCandle = history[history.length - 2];
-    console.log(lastCandle, 'lastCandle');
-    console.log(prevCandle, 'prevCandle');
+    // 🔥 TRIK ANTI DUPLIKAT (Filter by Date) 🔥
+    const historyMap = new Map();
     
-    
-    
+    for (const candle of history) {
+        // Pastikan date jadi format YYYY-MM-DD yang seragam buat kunci (key)
+        const dateKey = new Date(candle.date).toISOString().split('T')[0];
+        
+        // Masukkan ke Map. 
+        // Kalau tanggalnya sama (ada duplikat candle hari ini), 
+        // candle yang masuk belakangan otomatis akan menggantikan yang lama!
+        historyMap.set(dateKey, candle);
+    }
+
+    // Ubah balik isi Map menjadi Array murni
+    const cleanHistory = Array.from(historyMap.values());
+
+    // Cek ulang panjang array setelah dibersihkan
+    if (cleanHistory.length < 5) return result;
+
+    // Sekarang urutannya dijamin UNIK. 
+    // -1 = PASTI Candle hari ini (live)
+    // -2 = PASTI Candle kemarin (bukan duplikat hari ini)
+    const lastCandle = cleanHistory[cleanHistory.length - 1];
+    const prevCandle = cleanHistory[cleanHistory.length - 2];
+        
     // Set Data Dasar
     result.last_price = lastCandle.close;
     result.prev_price = prevCandle.close;
@@ -593,7 +611,7 @@ function analyzeCandlesIntraday(history) {
     if (condPrice && condGain && condVol && condValue) {        
         result.is_scalping = true;
     }
-
+    
     return result;
 }
 
@@ -2628,54 +2646,101 @@ async function processIntradayUpdateAll() {
         const ticker = symbol.replace(".JK", ""); 
 
         try {
-            // --- STEP 1: TARIK DATA SUPER RINGAN ---
-            const [quoteResult, historyResult] = await Promise.all([
-                yahooFinance.quote(symbol).catch(e => null),
-                
-                yahooFinance.historical(symbol, { 
-                    period1: startDate, 
-                    period2: new Date(),
-                    interval: '1d' 
-                }).catch(e => {
-                    // Jangan didiamkan, kita log biar tahu kalau ada error beneran
-                    console.error(`⚠️ Gagal narik history intraday ${ticker}:`, e.message);
-                    return [];
-                })
-            ]);
-            
-            if (!quoteResult || !quoteResult.regularMarketPrice) {
-                continue; // Skip kalau data bolong
+            const chartData = await yahooFinance.chart(symbol, {
+                period1: startDate,
+                period2: new Date(),
+                interval: '1d'
+            }).catch(e => {
+                console.error(`⚠️Gagal narik chart ${symbol}:`, e.message);
+                return null;
+            });
+
+            // 1. Validasi kalau data kosong dari Yahoo
+            if (!chartData || !chartData.quotes || chartData.quotes.length === 0) {
+                console.log(`⏩ Skip ${symbol}: Data history kosong`);
+                continue; 
             }
 
-            const currentPrice = quoteResult.regularMarketPrice;
-            const currentVol = quoteResult.regularMarketVolume || 0;
-            const prevClosePrice = quoteResult.regularMarketPreviousClose;
-            
-            // --- STEP 2: LOGIC SCREENER INTRADAY ---
-            const screenerStats = analyzeCandlesIntraday(historyResult);
-            
-            
-            // Ambil Volume H-1 dari history buat nyari Spike
-            const prevCandle = historyResult.length >= 3 ? historyResult[historyResult.length - 3] : null;
-            
-            const prevVol = prevCandle ? prevCandle.volume : currentVol; 
+            // 2. Bersihkan candle yang harganya bolong/null (Kasus saham TALF dll)
+            const cleanHistory = chartData.quotes.filter(candle => candle.close != null);
+
+           const currentCandle = cleanHistory[cleanHistory.length - 1];
+            const prevCandle = cleanHistory[cleanHistory.length - 2];
+
+            const currentPrice = currentCandle.close;
+            const currentVol = currentCandle.volume || 0; 
+            const prevClosePrice = prevCandle.close;
+            const prevVol = prevCandle.volume || 0;
+
+            // --- HITUNG MANUAL PENGGANTI QUOTE ---
+            const change = currentPrice - prevClosePrice;
+            const changePct = prevClosePrice > 0 ? (change / prevClosePrice) * 100 : 0;
             
             const transactionValue = currentPrice * currentVol;
-            const volSpikeRatio = prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0";            
+            const volSpikeRatio = prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0";
+            
+            // --- STEP 2: LOGIC SCREENER INTRADAY ---
+            const screenerStats = analyzeCandlesIntraday(cleanHistory);
+            
+            
+            // --- STEP 1: TARIK DATA SUPER RINGAN ---
+            // const [quoteResult, historyResult] = await Promise.all([
+            //     yahooFinance.quote(symbol).catch(e => null),
+                
+            //     yahooFinance.historical(symbol, { 
+            //         period1: startDate, 
+            //         period2: new Date(),
+            //         interval: '1d' 
+            //     }).catch(e => {
+            //         // Jangan didiamkan, kita log biar tahu kalau ada error beneran
+            //         console.error(`⚠️ Gagal narik history intraday ${ticker}:`, e.message);
+            //         return [];
+            //     })
+            // ]);
+            
+            // if (!quoteResult || !quoteResult.regularMarketPrice) {
+            //     continue; // Skip kalau data bolong
+            // }
+
+            // const currentPrice = quoteResult.regularMarketPrice;
+            // const currentVol = quoteResult.regularMarketVolume || 0;
+            // const prevClosePrice = quoteResult.regularMarketPreviousClose;
+            
+            // // --- STEP 2: LOGIC SCREENER INTRADAY ---
+            // const screenerStats = analyzeCandlesIntraday(historyResult);
+            
+            
+            // // Ambil Volume H-1 dari history buat nyari Spike
+            // const prevCandle = historyResult.length >= 3 ? historyResult[historyResult.length - 3] : null;
+            
+            // const prevVol = prevCandle ? prevCandle.volume : currentVol; 
+            
+            // const transactionValue = currentPrice * currentVol;
+            // const volSpikeRatio = prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0";
+            // console.log(screenerStats);
+               
 
             // --- STEP 3: UPDATE KE DB ---
             await StockModel.findOneAndUpdate(
                 { symbol: symbol }, // Cari pakai yang ada .JK-nya
                 {
                     $set: {
-                        open: quoteResult.regularMarketOpen,
-                        high: quoteResult.regularMarketDayHigh,
-                        low: quoteResult.regularMarketDayLow,
+                        // open: quoteResult.regularMarketOpen,
+                        // high: quoteResult.regularMarketDayHigh,
+                        // low: quoteResult.regularMarketDayLow,
+                        // close: currentPrice,
+                        // change: quoteResult.regularMarketChange,
+                        // changePct: quoteResult.regularMarketChangePercent 
+                        //     ? parseFloat((quoteResult.regularMarketChangePercent).toFixed(2)) 
+                        //     : 0,
+                        // volume: currentVol,
+                        // previousClose: prevClosePrice,
+                        open: currentCandle.open,
+                        high: currentCandle.high,
+                        low: currentCandle.low,
                         close: currentPrice,
-                        change: quoteResult.regularMarketChange,
-                        changePct: quoteResult.regularMarketChangePercent 
-                            ? parseFloat((quoteResult.regularMarketChangePercent).toFixed(2)) 
-                            : 0,
+                        change: parseFloat(change.toFixed(2)),
+                        changePct: parseFloat(changePct.toFixed(2)),
                         volume: currentVol,
                         previousClose: prevClosePrice,
                         "screener.is_big_money": screenerStats.is_big_money,
@@ -2683,7 +2748,8 @@ async function processIntradayUpdateAll() {
                         "screener.is_small_accum": screenerStats.is_small_accum,
                         "screener.total_value_today": transactionValue,
                         "screener.tx_value": transactionValue,
-                        "screener.change_pct": quoteResult.regularMarketChangePercent,
+                        // "screener.change_pct": quoteResult.regularMarketChangePercent,
+                        "screener.change_pct": parseFloat(changePct.toFixed(2)),
                         "screener.vol_spike_ratio": volSpikeRatio,
                         "screener.last_updated": new Date()
                     }
@@ -2691,14 +2757,14 @@ async function processIntradayUpdateAll() {
                 { new: true }
             );
 
-            // console.log(`⚡ ${ticker} | P: ${currentPrice} | Vol: ${currentVol} | Spike: ${volSpikeRatio}x`);
+            console.log(`⚡ ${ticker} | P: ${currentPrice} | Vol: ${currentVol} | Spike: ${volSpikeRatio}x`);
 
         } catch (err) {
             console.error(`❌ Fail Intraday: ${ticker}`, err.message);
         }
         
         // Jeda 500ms biar aman dari Yahoo
-        await sleep(800); 
+        await sleep(675); 
     }
     console.log(`🏁 [CRON INTRADAY] Update SEMUA Saham Selesai!`);
 }
