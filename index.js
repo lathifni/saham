@@ -44,8 +44,8 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
-    // "BUVA", "SOCI", "GEMS", "BSSR"
-    // "BASIC_INDUSTRIAL":["SOTS",
+    // "BUVA", "SOCI", "GEMS", "BSSR", "BBHI", "CMNT", "MTDL"
+    // "BASIC_INDUSTRIAL":["JPFA", 
     // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
@@ -220,11 +220,12 @@ function calculateMA(candles, period) {
 }
 
 // Fungsi Analisis Candle (Screener Logic)
-function analyzeCandles(history) {
+function analyzeCandlesLAMAAAAA(history) {
     let result = {
         // Status Flags
         is_big_money: false,
         big_money_count: 0,
+        small_money_count: 0,
         is_small_accum: false,
         is_scalping: false, // <--- Logic Baru (High Volatility)
 
@@ -239,8 +240,17 @@ function analyzeCandles(history) {
     // Validasi data (Min 12 candle)
     if (!history || history.length < 12) return result;
 
-    const lastCandle = history[history.length - 2];
-    const prevCandle = history[history.length - 3];
+    const historyMap = new Map();
+    
+    for (const candle of history) {
+        const dateKey = new Date(candle.date).toISOString().split('T')[0];
+        historyMap.set(dateKey, candle);
+    }
+
+    // Ubah balik isi Map menjadi Array murni
+    const cleanHistory = Array.from(historyMap.values());    
+    const lastCandle = cleanHistory[cleanHistory.length - 1];
+    const prevCandle = cleanHistory[cleanHistory.length - 2];    
     
     // Set Data Dasar
     result.last_price = lastCandle.close;
@@ -249,124 +259,164 @@ function analyzeCandles(history) {
     result.total_value_today = lastCandle.close * lastCandle.volume;
 
     // 0. LOGIC AVG VALUE (11 Hari)
-    const last11 = history.slice(-11);
+    const last11 = cleanHistory.slice(-11);
     const totalValue11 = last11.reduce((acc, c) => acc + (c.close * (c.volume || 0)), 0);
     result.avg_value_transaction = Math.floor(totalValue11 / last11.length);
 
     // ============================================================
     // 1. LOGIC BIG ACCUMULATION (Scanner 10 Hari)
-    // ============================================================
-    // ... (KODE LOGIC BIG ACCUM YANG SUDAH KITA BUAT SEBELUMNYA - COPAS AJA) ...
-    // Pastikan variabel result.is_big_money dan result.big_money_count terisi di sini
-
     let validBigMoneyCount = 0;
     let validSmallMoneyCount = 0; // Tambahan buat ngitung berapa kali small accum terjadi
-    let stlBmTerakhir = null;
-    let stlSmTerakhir = null;
 
     // "Satpam" di awal: Boleh ngecek Big / Small nggak?
     const canCheckBig = lastCandle.close > 50;
     const canCheckSmall = lastCandle.close > 55;
     const MIN_TRANSACTION_SMALL = 300000000; // 300 Juta
     const MIN_TRANSACTION_BIG = 700000000; // 700 Juta
-    const isTodayGreen = lastCandle.close > prevCandle.close;
-    const isTodayFlatHigh = (lastCandle.close === prevCandle.close) && (lastCandle.close === lastCandle.high);
     const isTodayBullish = result.change_pct > 10
 
     if (lastCandle.close > 50) {
         const isTodayVolSpikeBig = lastCandle.volume > 0 && lastCandle.volume > (prevCandle.volume * 1);
         if (isTodayBullish && isTodayVolSpikeBig && result.total_value_today > MIN_TRANSACTION_BIG) {
             result.is_big_money = true;
+            result.is_scalping = true;
         }
     }
 
     // B. Cek Status Small Accumulation Hari Ini
     if (lastCandle.close > 55) {
-        const isTodayVolSpikeSmall = lastCandle.volume > (prevCandle.volume * 1.5);
+        const isTodayVolSpikeSmall = lastCandle.volume > (prevCandle.volume * 1.05);
+        
         const isTodayPriceRange = result.change_pct > 2 && result.change_pct < 5;
         if (isTodayPriceRange && isTodayVolSpikeSmall && result.total_value_today >= MIN_TRANSACTION_SMALL) {
             result.is_small_accum = true;
         }
     }
 
-    // Kalau minimal masuk salah satu syarat harga, baru kita jalankan loop 10 hari
+    // Kalau minimal masuk salah satu syarat harga, baru kita jalankan loop 10 hari ini yang lama
+    // if (canCheckBig || canCheckSmall) {
+    //     for (let i = history.length - 10; i < history.length; i++) {
+    //         const curr = history[i];     
+    //         const prev = history[i - 1]; 
+    //         if (!prev) continue;
+            
+    //         // --- DATA UMUM CANDLE HARI ITU ---
+    //         const isGreen = curr.close > prev.close;
+    //         const isFlatHigh = (curr.close === prev.close) && (curr.close === curr.high);
+    //         const isBullish = isGreen || isFlatHigh;
+            
+    //         // Hitung change_pct & transaksi KHUSUS untuk candle hari (i) ini
+    //         const currChangePct = ((curr.close - prev.close) / prev.close) * 100;
+    //         const currTotalValue = curr.close * (curr.volume || 0);
+
+    //         // ----------------------------------------------------
+    //         // 1. CEK BIG ACCUMULATION (Syarat Harga > 50)
+    //         // ----------------------------------------------------
+    //         if (canCheckBig) {
+    //             const isVolSpikeBig = curr.volume > 0 && curr.volume > (prev.volume * 1);
+
+    //             if (isBullish && isVolSpikeBig && currTotalValue > MIN_TRANSACTION_BIG) {
+    //                 const stl = calculateSTL(curr.low);
+    //                 stlBmTerakhir = stl;
+    //                 let isStillValid = true;
+                    
+    //                 for (let j = i + 1; j < history.length; j++) {
+    //                     if (history[j].close < stl) {
+    //                         isStillValid = false;
+    //                         break; 
+    //                     }
+    //                 }
+    //                 if (isStillValid) validBigMoneyCount++;
+    //             }
+    //         }
+
+    //         // ----------------------------------------------------
+    //         // 2. CEK SMALL ACCUMULATION (Syarat Harga > 55)
+    //         // ----------------------------------------------------
+    //         if (canCheckSmall) {
+    //             const isVolSpikeSmall = curr.volume > (prev.volume * 1.5);
+    //             const isPriceRangeMasuk = currChangePct > 2 && currChangePct < 5;
+                
+    //             // Cek syarat Small Accum di candle hari (i) ini
+    //             if (isPriceRangeMasuk && isVolSpikeSmall && currTotalValue >= MIN_TRANSACTION_SMALL) {
+    //                 const stl = calculateSTL(curr.low); // Hitung STL di sini aja biar hemat
+    //                 let isStillValid = true;
+                    
+    //                 // Cek hari-hari setelahnya, apakah harganya jebol ke bawah STL?
+    //                 for (let j = i + 1; j < history.length; j++) {
+    //                     if (history[j].close < stl) {
+    //                         isStillValid = false;
+    //                         break; 
+    //                     }
+    //                 }
+
+    //                 // Kalau sampai hari ini harga masih bertahan di atas STL, baru dihitung valid
+    //                 if (isStillValid) validSmallMoneyCount++;
+    //             }
+    //         }
+    //     }
+
+    //     // ============================================================
+    //     // HASIL AKHIR SETELAH LOOPING SELESAI
+    //     // ============================================================
+        
+    //     // Eksekusi Result Big Money
+    //     if (validBigMoneyCount > 1) {
+    //         // result.is_big_money = true;
+    //         result.big_money_count = validBigMoneyCount;
+    //     }
+
+    //     // Eksekusi Result Small Money (misal kita anggap valid kalau minimal 1 atau 2 kali terjadi)
+    //     if (validSmallMoneyCount > 1) { 
+    //         // result.is_small_accum = true;
+    //         result.small_money_count = validSmallMoneyCount
+    //         // opsional: result.small_money_count = validSmallMoneyCount; kalau mau disimpen ke DB
+    //     }
+    // }
     if (canCheckBig || canCheckSmall) {
         for (let i = history.length - 10; i < history.length; i++) {
             const curr = history[i];     
             const prev = history[i - 1]; 
             if (!prev) continue;
             
-            // --- DATA UMUM CANDLE HARI ITU ---
-            const isGreen = curr.close > prev.close;
-            const isFlatHigh = (curr.close === prev.close) && (curr.close === curr.high);
-            const isBullish = isGreen || isFlatHigh;
-            
-            // Hitung change_pct & transaksi KHUSUS untuk candle hari (i) ini
             const currChangePct = ((curr.close - prev.close) / prev.close) * 100;
+            const isTodayBullish = currChangePct > 10
             const currTotalValue = curr.close * (curr.volume || 0);
 
-            // ----------------------------------------------------
-            // 1. CEK BIG ACCUMULATION (Syarat Harga > 50)
-            // ----------------------------------------------------
+            // ====================================================
+            // 1. LOGIC BIG ACCUMULATION (Sistem Jalan Maju)
+            // ====================================================
             if (canCheckBig) {
+                // B. Cek apakah HARI INI ada aksi Big Money baru?
                 const isVolSpikeBig = curr.volume > 0 && curr.volume > (prev.volume * 1);
-
-                if (isBullish && isVolSpikeBig && currTotalValue > MIN_TRANSACTION_BIG) {
-                    const stl = calculateSTL(curr.low);
-                    stlBmTerakhir = stl;
-                    let isStillValid = true;
-                    
-                    for (let j = i + 1; j < history.length; j++) {
-                        if (history[j].close < stl) {
-                            isStillValid = false;
-                            break; 
-                        }
-                    }
-                    if (isStillValid) validBigMoneyCount++;
+                if (isTodayBullish && isVolSpikeBig && currTotalValue > MIN_TRANSACTION_BIG) {
+                    validBigMoneyCount++;
                 }
             }
 
-            // ----------------------------------------------------
-            // 2. CEK SMALL ACCUMULATION (Syarat Harga > 55)
-            // ----------------------------------------------------
+            // ====================================================
+            // 2. LOGIC SMALL ACCUMULATION (Sistem Jalan Maju)
+            // ====================================================
             if (canCheckSmall) {
-                const isVolSpikeSmall = curr.volume > (prev.volume * 1.5);
+                // B. Cek apakah HARI INI ada aksi Small Accum baru?
+                const isVolSpikeSmall = curr.volume > (prev.volume * 1.05);
                 const isPriceRangeMasuk = currChangePct > 2 && currChangePct < 5;
-                
-                // Cek syarat Small Accum di candle hari (i) ini
-                if (isPriceRangeMasuk && isVolSpikeSmall && currTotalValue >= MIN_TRANSACTION_SMALL) {
-                    const stl = calculateSTL(curr.low); // Hitung STL di sini aja biar hemat
-                    let isStillValid = true;
-                    
-                    // Cek hari-hari setelahnya, apakah harganya jebol ke bawah STL?
-                    for (let j = i + 1; j < history.length; j++) {
-                        if (history[j].close < stl) {
-                            isStillValid = false;
-                            break; 
-                        }
-                    }
 
-                    // Kalau sampai hari ini harga masih bertahan di atas STL, baru dihitung valid
-                    if (isStillValid) validSmallMoneyCount++;
+                if (isPriceRangeMasuk && isVolSpikeSmall && currTotalValue >= MIN_TRANSACTION_SMALL) {
+                    validSmallMoneyCount++;
                 }
             }
         }
 
         // ============================================================
-        // HASIL AKHIR SETELAH LOOPING SELESAI
+        // HASIL AKHIR SETELAH 10 HARI SELESAI
         // ============================================================
-        
-        // Eksekusi Result Big Money
-        if (validBigMoneyCount >= 2) {
-            result.is_big_money = true;
+        if (validBigMoneyCount > 1) {
             result.big_money_count = validBigMoneyCount;
         }
 
-        // Eksekusi Result Small Money (misal kita anggap valid kalau minimal 1 atau 2 kali terjadi)
-        if (validSmallMoneyCount > 0) { 
-            result.is_small_accum = true;
-            result.small_money_count = validSmallMoneyCount
-            // opsional: result.small_money_count = validSmallMoneyCount; kalau mau disimpen ke DB
+        if (validSmallMoneyCount > 1) { 
+            result.small_money_count = validSmallMoneyCount;
         }
     }
 
@@ -395,20 +445,508 @@ function analyzeCandles(history) {
     // c. Vol Hari Ini > Vol Kemarin
     // d. Value Transaksi > 700 Juta
     
-    const MIN_TRANSACTION_SCALP = 700000000; // 700 Juta
+    // const MIN_TRANSACTION_SCALP = 700000000; // 700 Juta
 
-    const condPrice = lastCandle.close > 50;
-    const condGain = result.change_pct > 10;
+    // const condPrice = lastCandle.close > 50;
+    // const condGain = result.change_pct > 10;
     
-    const condVol = lastCandle.volume > prevCandle.volume;
-    const condValue = result.total_value_today > MIN_TRANSACTION_SCALP;    
+    // const condVol = lastCandle.volume > prevCandle.volume;
+    // const condValue = result.total_value_today > MIN_TRANSACTION_SCALP;    
 
-    if (condPrice && condGain && condVol && condValue) {        
-        result.is_scalping = true;
+    // if (condPrice && condGain && condVol && condValue) {  
+    //     result.is_scalping = true;
+    // }
+
+    return result;
+}
+
+const stepUpOneTick = (price) => {
+    if (price >= 5000) return price + 25; 
+    if (price >= 2000) return price + 10;
+    if (price >= 500) return price + 5;
+    if (price >= 200) return price + 2;
+    if (price >= 1) return price + 1;
+    return price;
+};
+
+const increaseByTicks = (price, totalTicks) => {
+    let currentPrice = price;
+    for (let i = 0; i < totalTicks; i++) {
+        currentPrice = stepUpOneTick(currentPrice);
+    }
+    return currentPrice;
+};
+
+// --- FUNGSI PENGHITUNG AREA JARING BAWAH (REACCUM) ---
+const calculateReaccumPlan = (brokenSupportAwal) => {
+    const getRange = (centerPrice) => {
+        const isBigFraction = centerPrice >= 2000; 
+        const tickCount = isBigFraction ? 5 : 2; 
+
+        const low = decreaseByTicks(centerPrice, tickCount);
+        const high = increaseByTicks(centerPrice, tickCount);
+        return [low, high]; 
+    };
+
+    const rawR1 = brokenSupportAwal * (1 - 0.054);
+    const centerR1 = roundDownToValidTick(rawR1);
+
+    const rawR2 = brokenSupportAwal * (1 - 0.104);
+    const centerR2 = roundDownToValidTick(rawR2);
+
+    const rawR3 = brokenSupportAwal * (1 - 0.154);
+    const centerR3 = roundDownToValidTick(rawR3);
+
+    const rawR4 = brokenSupportAwal * (1 - 0.204);
+    const centerR4 = roundDownToValidTick(rawR4);
+
+    const rawR5 = brokenSupportAwal * (1 - 0.254);
+    const centerR5 = roundDownToValidTick(rawR5);
+
+    return {
+        reaccum1: getRange(centerR1),
+        reaccum2: getRange(centerR2),
+        reaccum3: getRange(centerR3),
+        reaccum4: getRange(centerR4),
+        reaccum5: getRange(centerR5),
+    };
+};
+
+function analyzeCandles(history) {
+    let result = {
+        // Status Flags (Realtime hari ini)
+        is_big_money: false,
+        big_money_count: 0,
+        small_money_count: 0,
+        is_small_accum: false,
+        is_scalping: false,
+
+        // 🔥 DATA SMART MONEY MAP 🔥
+        smart_money_map: {
+            jenis: "NONE", // Default: "NONE", "BIG_MONEY", atau "NON_BIG_MONEY"
+            SAV: 0,
+            support_pertahanan: 0,
+            support_kuat: 0,
+            support_awal: 0,
+            TSP1: 0,
+            TSP2: 0,
+            TSP3: 0,
+        },
+
+        reaccum_plan: {
+            reaccum1: null,
+            reaccum2: null,
+            reaccum3: null,
+            reaccum4: null,
+            reaccum5: null,
+        },
+
+        // Data Penting buat Sorting/Ranking di DB
+        last_price: 0,
+        prev_price: 0,
+        change_pct: 0.0,
+        total_value_today: 0,
+        avg_value_transaction: 0 
+    };
+    
+    // Validasi data (Min 12 candle)
+    if (!history || history.length < 12) return result;
+
+    // ----------------------------------------------------
+    // 1. PEMBERSIHAN DATA (Hapus Duplikat Tanggal)
+    // ----------------------------------------------------
+    const historyMap = new Map();
+    for (const candle of history) {
+        const dateKey = new Date(candle.date).toISOString().split('T')[0];
+        historyMap.set(dateKey, candle);
+    }
+    const cleanHistory = Array.from(historyMap.values());    
+    const lastCandle = cleanHistory[cleanHistory.length - 1];
+    const prevCandle = cleanHistory[cleanHistory.length - 2];    
+    
+    // Set Data Dasar
+    result.last_price = lastCandle.close;
+    result.prev_price = prevCandle.close;
+    result.change_pct = prevCandle.close > 0 ? ((lastCandle.close - prevCandle.close) / prevCandle.close) * 100 : 0;
+    result.total_value_today = lastCandle.close * (lastCandle.volume || 0);
+
+    // Hitung Rata-rata Transaksi 11 Hari
+    const last11 = cleanHistory.slice(-11);
+    
+    const totalValue11 = last11.reduce((acc, c) => acc + (c.close * (c.volume || 0)), 0);
+    result.avg_value_transaction = Math.floor(totalValue11 / last11.length);
+
+    // ============================================================
+    // ⭐ MESIN WAKTU: CARI SUPPORT & SAV (1 TAHUN)
+    // ============================================================
+    
+    // 🔥 PENGGANTI activeSTL_BM (Simpan paket komplit)
+    let activeBM = null;  
+    let activeTBM = null; 
+
+    let stateAnvol = "MENCARI_DASAR_1"; 
+    let calon_sav1 = cleanHistory[0].close; 
+    let cek_sav2 = 0;
+    let cek_sav3 = 0;
+    let cek_sav4 = 0; // 🔥 Tambahin ini bro!
+    let cek_sav5 = 0; // 🔥 Amunisi baru untuk hari ke-5
+
+    const MIN_TRANSACTION_BM = 700000000;
+    const MIN_TRANSACTION_SMALL = 100000000; // 100 Juta
+    let lastValidVolume = cleanHistory[0].volume || 1;
+    let lastBrokenSupportAwal = 0;
+
+    for (let i = 1; i < cleanHistory.length; i++) {
+        const curr = cleanHistory[i];
+        const prev = cleanHistory[i - 1];
+        if (!prev) continue;
+
+        const currTotalValue = curr.close * (curr.volume || 0);
+
+        // Referensi tameng saat ini (Pakai BM kalau ada, kalau gak ada pakai TBM)
+        let currentReferenceAwal = activeBM ? activeBM.support_awal : (activeTBM ? activeTBM.support_awal : null);
+        
+        // --- A. SUPPORT BIG MONEY ---
+        if (activeBM !== null && curr.close < activeBM.support_awal) {
+            const currDate = new Date(curr.date).toISOString().split('T')[0];
+            console.log(`🚨 [${currDate}] JEBOL BM! Close: ${curr.close} tembus Support Awal BM: ${activeBM.support_awal}`);
+            lastBrokenSupportAwal = activeBM.support_awal;
+            console.log(lastBrokenSupportAwal);
+            activeBM = null; // Jebol!
+        }
+
+        const isVolSpike3x = curr.volume > 0 && curr.volume >= (lastValidVolume * 3);
+        const isGreenCandle = curr.close > curr.open && curr.close > prev.close;
+
+        if (curr.close > 50 && isGreenCandle && isVolSpike3x && currTotalValue > MIN_TRANSACTION_BM) {
+            // Langsung panggil fungsi kalkulator support-nya
+            activeBM = calculateSupports(curr.low); 
+            
+            stateAnvol = "TRENDING"; // Tameng aktif
+            activeTBM = null;        // TBM minggir dulu, Bos Besar lewat
+            const currDate = new Date(curr.date).toISOString().split('T')[0];
+            console.log('ini ada BM lho', currDate, curr.volume >= (lastValidVolume * 3), lastValidVolume);
+        }
+
+        // --- B. SUPPORT NON-BIG MONEY (4 HARI PEMASTIAN) ---
+        let isSupportJebol = (currentReferenceAwal !== null && curr.close < currentReferenceAwal);
+
+        if (stateAnvol === "TRENDING" && isSupportJebol) {
+            if (activeTBM !== null && curr.close < activeTBM.support_awal) {
+                const currDate = new Date(curr.date).toISOString().split('T')[0];
+                console.log(`🚨 [${currDate}] JEBOL TBM! Close: ${curr.close} tembus Support Awal TBM: ${activeTBM.support_awal}`);
+                lastBrokenSupportAwal = activeTBM.support_awal;
+                console.log(lastBrokenSupportAwal);
+                activeTBM = null;
+            }
+            stateAnvol = "MENCARI_DASAR_1";
+            calon_sav1 = curr.close;
+            console.log('MENCARI_DASAR_1');
+            
+        }
+        else if (stateAnvol === "MENCARI_DASAR_1") {
+            if (curr.close < calon_sav1) {
+                calon_sav1 = curr.close; 
+            } else {
+                cek_sav2 = curr.close;
+                stateAnvol = "MENCARI_DASAR_2";
+                console.log('MENCARI_DASAR_2');
+            }
+        }
+        else if (stateAnvol === "MENCARI_DASAR_2") {
+            const lowestSoFar = Math.min(calon_sav1, cek_sav2);
+            if (curr.close < lowestSoFar) {
+                calon_sav1 = curr.close; 
+                stateAnvol = "MENCARI_DASAR_1"; // Gagal, reset hari 1
+            } else {
+                cek_sav3 = curr.close;
+                stateAnvol = "MENCARI_DASAR_3"; // Lanjut ujian hari ke-4!
+                console.log('MENCARI_DASAR_3');
+            }
+        }
+        else if (stateAnvol === "MENCARI_DASAR_3") {
+            const lowestSoFar = Math.min(calon_sav1, cek_sav2, cek_sav3);
+            if (curr.close < lowestSoFar) {
+                calon_sav1 = curr.close; 
+                stateAnvol = "MENCARI_DASAR_1"; 
+            } else {
+                cek_sav4 = curr.close;
+                stateAnvol = "MENCARI_DASAR_4"; // 🔥 Lanjut ke pos penjagaan ke-4
+            }
+        }
+        else if (stateAnvol === "MENCARI_DASAR_4") {
+            // 🔥 Penentuan Akhir di Hari ke-5 🔥
+            const lowestSoFar = Math.min(calon_sav1, cek_sav2, cek_sav3, cek_sav4);
+            if (curr.close < lowestSoFar) {
+                calon_sav1 = curr.close; 
+                stateAnvol = "MENCARI_DASAR_1"; // Sakit nih jebol di tikungan terakhir, balik hari 1!
+                // console.log('Gagal di hari ke-5, balik MENCARI_DASAR_1');
+            } else {
+                cek_sav5 = curr.close;
+                
+                // SAH LULUS 1 MINGGU (5 HARI)! Masukin ke kalkulator
+                const savTerendah = Math.min(calon_sav1, cek_sav2, cek_sav3, cek_sav4, cek_sav5);
+                activeTBM = calculateSupports(savTerendah);
+                const currDate = new Date(curr.date).toISOString().split('T')[0];
+                
+                console.log(`✅ [${currDate}] KETEMU SUPPORT TBM BARU! (Lulus 5 Hari / 1 Minggu)`);
+                stateAnvol = "TRENDING";
+            }
+        }
+
+        if (curr.volume > 0) {
+            lastValidVolume = curr.volume;
+        }        
+    }
+
+    // ============================================================
+    // 🏆 3. FINALISASI SMART MONEY MAP
+    // ============================================================
+    if (activeBM !== null) {
+        // Kasta Tertinggi: Big Money
+        result.smart_money_map.jenis = "BIG_MONEY";
+        
+        // Tinggal panggil dari dalam object activeBM
+        result.smart_money_map.SAV = activeBM.SAV;
+        
+        // Hasil dari fungsi fraksi harga BEI
+        result.smart_money_map.support_awal = activeBM.support_awal; 
+        result.smart_money_map.support_kuat = activeBM.support_kuat; 
+        result.smart_money_map.support_pertahanan = activeBM.support_pertahanan;
+        
+        // Tarik data TSP dari object activeBM!
+        result.smart_money_map.TSP1 = activeBM.TSP1; 
+        result.smart_money_map.TSP2 = activeBM.TSP2; 
+        result.smart_money_map.TSP3 = activeBM.TSP3;
+
+        result.reaccum_plan = { reaccum1: null, reaccum2: null, reaccum3: null, reaccum4: null, reaccum5: null };
+    } 
+    else if (activeTBM !== null) {
+        // Kasta Kedua: Non-Big Money (Base Building 3 Hari)
+        result.smart_money_map.jenis = "NON_BIG_MONEY";
+        
+        // Tinggal panggil dari dalam object activeTBM
+        result.smart_money_map.SAV = activeTBM.SAV;
+
+        // Hasil dari fungsi fraksi harga BEI
+        result.smart_money_map.support_awal = activeTBM.support_awal;
+        result.smart_money_map.support_kuat = activeTBM.support_kuat;
+        result.smart_money_map.support_pertahanan = activeTBM.support_pertahanan;
+        
+        // Tarik data TSP dari object activeTBM!
+        result.smart_money_map.TSP1 = activeTBM.TSP1;
+        result.smart_money_map.TSP2 = activeTBM.TSP2;
+        result.smart_money_map.TSP3 = activeTBM.TSP3;
+
+        result.reaccum_plan = { reaccum1: null, reaccum2: null, reaccum3: null, reaccum4: null, reaccum5: null };
+    } else {
+        // 🔥 FATAL! GAK PUNYA TAMENG SAMA SEKALI (JEBOL SEMUA) 🔥
+        result.smart_money_map.jenis = "NONE"; 
+        
+        // Cek apakah ada sejarah support yang jebol buat dijadiin acuan Reaccum
+        if (lastBrokenSupportAwal > 0) {
+            result.reaccum_plan = calculateReaccumPlan(lastBrokenSupportAwal);
+        } else {
+            result.reaccum_plan = { reaccum1: null, reaccum2: null, reaccum3: null };
+        }
+    }
+
+    // ============================================================
+    // 📈 4. SCANNER 10 HARI TERAKHIR (Logika "Jalan Maju")
+    // ============================================================
+    let validBigMoneyCount = 0;
+    let validSmallMoneyCount = 0;
+
+    const canCheckBig = lastCandle.close > 50;
+    const canCheckSmall = lastCandle.close > 55;
+
+    if (canCheckBig || canCheckSmall) {
+        let stlScannerBM = null;
+        let stlScannerSM = null;
+        
+        // Looping khusus 10 hari terakhir
+        const startIndex = Math.max(1, cleanHistory.length - 10);
+
+        for (let i = startIndex; i < cleanHistory.length; i++) {
+            const curr = cleanHistory[i];     
+            const prev = cleanHistory[i - 1]; 
+            
+            const currChangePct = ((curr.close - prev.close) / prev.close) * 100;
+            const currTotalValue = curr.close * (curr.volume || 0);
+
+            // LOGIC BIG ACCUMULATION (Syarat Normal > 10% & Vol Naik)
+            if (canCheckBig) {
+                if (stlScannerBM !== null && curr.close < stlScannerBM) {
+                    validBigMoneyCount = 0; // Jebol, reset
+                    stlScannerBM = null; 
+                }
+
+                const isVolSpikeBig = curr.volume > 0 && curr.volume > (prev.volume * 1);
+                const isBullish = currChangePct > 10;
+
+                if (isBullish && isVolSpikeBig && currTotalValue > MIN_TRANSACTION_BM) {
+                    validBigMoneyCount++;
+                    stlScannerBM = curr.low; // Hitung STL
+                }
+            }
+
+            // LOGIC SMALL ACCUMULATION
+            if (canCheckSmall) {
+                if (stlScannerSM !== null && curr.close < stlScannerSM) {
+                    validSmallMoneyCount = 0; // Jebol, reset
+                    stlScannerSM = null;
+                }
+
+                const isVolSpikeSmall = curr.volume > (prev.volume * 1.05);
+                const isPriceRangeMasuk = currChangePct > 2 && currChangePct < 5;
+
+                if (isPriceRangeMasuk && isVolSpikeSmall && currTotalValue >= MIN_TRANSACTION_SMALL) {
+                    validSmallMoneyCount++;
+                    stlScannerSM = curr.low; // Hitung STL
+                }
+            }
+        }
+
+        if (validBigMoneyCount > 1) result.big_money_count = validBigMoneyCount;
+        if (validSmallMoneyCount > 1) result.small_money_count = validSmallMoneyCount;
+    }
+
+
+    // ============================================================
+    // 🚨 5. PENGECEKAN HARI INI SAJA (Lampu Indikator UI Android)
+    // ============================================================
+    const isTodayBullish = result.change_pct > 10;
+    
+    if (lastCandle.close > 50) {
+        const isTodayVolSpikeBig = lastCandle.volume > 0 && lastCandle.volume > (prevCandle.volume * 1);
+        
+        if (isTodayBullish && isTodayVolSpikeBig && result.total_value_today > MIN_TRANSACTION_BM) {
+            result.is_big_money = true;
+            result.is_scalping = true;
+        } else {
+            // 🔥 WAJIB RESET BIAR GAK BAWA STATUS MASA LALU 🔥
+            result.is_big_money = false;
+            result.is_scalping = false;
+        }
+    }
+
+    if (lastCandle.close > 55) {
+        const isTodayVolSpikeSmall = lastCandle.volume > (prevCandle.volume * 1.05);
+        const isTodayPriceRange = result.change_pct > 2 && result.change_pct < 5;
+        
+        if (isTodayPriceRange && isTodayVolSpikeSmall && result.total_value_today >= MIN_TRANSACTION_SMALL) {
+            result.is_small_accum = true;
+        } else {
+            result.is_small_accum = false;
+        }
     }
 
     return result;
 }
+
+const stepDownOneTick = (price) => {
+    if (price > 5000) return price - 25; // Fraksi Rp 25
+    if (price > 2000) return price - 10; // Fraksi Rp 10
+    if (price > 500) return price - 5;   // Fraksi Rp 5
+    if (price > 200) return price - 2;   // Fraksi Rp 2
+    if (price > 1) return price - 1;     // Fraksi Rp 1 (Termasuk papan akselerasi)
+    return price; // Mentok
+};
+
+// Fungsi nurunin harga sebanyak N papan
+const decreaseByTicks = (price, totalTicks) => {
+    let currentPrice = price;
+    for (let i = 0; i < totalTicks; i++) {
+        currentPrice = stepDownOneTick(currentPrice);
+    }
+    return currentPrice;
+};
+
+const roundUpToValidTick = (rawPrice) => {
+    if (rawPrice > 5000) {
+        // Contoh: 5012 / 25 = 200.48 -> di-ceil jadi 201 -> dikali 25 = 5025
+        return Math.ceil(rawPrice / 25) * 25; 
+    } 
+    else if (rawPrice > 2000) {
+        return Math.ceil(rawPrice / 10) * 10;
+    } 
+    else if (rawPrice > 500) {
+        return Math.ceil(rawPrice / 5) * 5;
+    } 
+    else if (rawPrice > 200) {
+        return Math.ceil(rawPrice / 2) * 2;
+    } 
+    else {
+        return Math.ceil(rawPrice);
+    }
+};
+
+// --- FUNGSI PENGHITUNG SUPPORT GURUMU ---
+const roundDownToValidTick = (rawPrice) => {
+    if (rawPrice > 5000) {
+        // Papan > 5000 fraksinya 25. 
+        // Contoh: 9024 / 25 = 360.96 -> di-floor jadi 360 -> dikali 25 = 9000
+        return Math.floor(rawPrice / 25) * 25; 
+    } 
+    else if (rawPrice > 2000) {
+        // Papan > 2000 fraksinya 10.
+        // Contoh: 2118 / 10 = 211.8 -> di-floor jadi 211 -> dikali 10 = 2110
+        return Math.floor(rawPrice / 10) * 10;
+    } 
+    else if (rawPrice > 500) {
+        // Papan > 500 fraksinya 5.
+        // Contoh: 604 / 5 = 120.8 -> di-floor jadi 120 -> dikali 5 = 600
+        return Math.floor(rawPrice / 5) * 5;
+    } 
+    else if (rawPrice > 200) {
+        // Papan > 200 fraksinya 2.
+        // Contoh: 403 / 2 = 201.5 -> di-floor jadi 201 -> dikali 2 = 402
+        return Math.floor(rawPrice / 2) * 2;
+    } 
+    else {
+        // Papan gocap sampai 200 fraksinya 1
+        return Math.floor(rawPrice);
+    }
+};
+
+// --- FUNGSI PENGHITUNG SUPPORT GURUMU (UPDATED) ---
+// --- FUNGSI PENGHITUNG SUPPORT & TARGET (UPDATED) ---
+const calculateSupports = (sav) => {
+    // 1. Hitung Area Support (Bawah)
+    const pertahanan = decreaseByTicks(sav, 5);           
+    const kuat = decreaseByTicks(pertahanan, 5);          
+    const rawAwal = kuat * (1 - 0.023);          
+    const awal = roundDownToValidTick(rawAwal); 
+    
+    // 2. Hitung Area Target Jual / TSP (Atas)
+    // Rumus: SAV + (Persen Target + 0.4% Fee), bulatkan ke tick valid, lalu turunin 1 tick
+    
+    // TSP1: Target 8% + 0.4% Fee
+    const rawTSP1 = sav * (1 + 0.084);
+    const validTickTSP1 = roundUpToValidTick(rawTSP1); // Bulatkan dulu ke fraksi BEI
+    const tsp1 = stepDownOneTick(validTickTSP1);         // Turunin 1 papan biar cepat laku!
+
+    // TSP2: Target 13% + 0.4% Fee
+    const rawTSP2 = sav * (1 + 0.134);
+    const validTickTSP2 = roundUpToValidTick(rawTSP2);
+    const tsp2 = stepDownOneTick(validTickTSP2);
+
+    // TSP3: Target 23% + 0.4% Fee
+    const rawTSP3 = sav * (1 + 0.234);
+    const validTickTSP3 = roundUpToValidTick(rawTSP3);
+    const tsp3 = stepDownOneTick(validTickTSP3);
+    
+    return {
+        SAV: sav,
+        support_pertahanan: pertahanan,
+        support_kuat: kuat,
+        support_awal: awal,
+        TSP1: tsp1, // Masukin hasil hitungan TSP ke output
+        TSP2: tsp2,
+        TSP3: tsp3
+    };
+};
+
 function analyzeCandlesIntradayLAMAAAAAA(history) {
     let result = {
         // Status Flags
@@ -491,6 +1029,7 @@ function analyzeCandlesIntradayLAMAAAAAA(history) {
 
     return result;
 }
+
 function analyzeCandlesIntraday(history) {    
     let result = {
         // Status Flags
@@ -568,7 +1107,7 @@ function analyzeCandlesIntraday(history) {
 
     // B. Cek Status Small Accumulation Hari Ini
     if (lastCandle.close > 55) {
-        const isTodayVolSpikeSmall = lastCandle.volume > (prevCandle.volume * 1.5);
+        const isTodayVolSpikeSmall = lastCandle.volume > (prevCandle.volume * 1.05);
         const isTodayPriceRange = result.change_pct > 2 && result.change_pct < 5;
         if (isTodayPriceRange && isTodayVolSpikeSmall && result.total_value_today >= MIN_TRANSACTION_SMALL) {
             result.is_small_accum = true;
@@ -1167,6 +1706,8 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
             movingAverages: stock.movingAverages,
             fundamentals: stock.fundamentals,
             ownership: stock.ownership,
+            smart_money_map: stock.smart_money_map,
+            reaccum_plan: stock.reaccum_plan,
             
             // Flag tambahan buat Android tau user ini statusnya apa (opsional tapi berguna)
             // is_locked: !isPremium 
@@ -2346,20 +2887,17 @@ async function processSectorUpdate(sectorName) {
     // const startDate = new Date();
     // startDate.setDate(today.getDate() - 365); 
 
+    // const startDate = new Date();
+    // startDate.setDate(today.getDate() - 365); 
+    // const period1 = startDate.toISOString().split('T')[0]; // Hasil: "2025-03-17"
     const startDate = new Date();
     startDate.setDate(today.getDate() - 365); 
-    const period1 = startDate.toISOString().split('T')[0]; // Hasil: "2025-03-17"
-
-    // // Set Kemarin
-    const yesterday = new Date();
-    yesterday.setDate(today.getDate() - 1);
-    const period2 = yesterday.toISOString().split('T')[0]; // Hasil: "2026-03-16"
 
     for (const ticker of stockList) {
         const symbol = ticker + ".JK";
         try {            
                 // --- STEP 1: TARIK DATA ---
-                const [quoteResult, historyResult] = await Promise.all([
+                const [quoteResult] = await Promise.all([
                     yahooFinance.quoteSummary(symbol, {
                         modules: ["price", "summaryDetail", "defaultKeyStatistics"]
                     }).catch(e => {
@@ -2367,20 +2905,6 @@ async function processSectorUpdate(sectorName) {
                         console.error(`⚠️ Gagal narik quoteResult ${ticker}:`, e.message);
                         return null;
                     }),
-                    
-                    // Tarik history 1 tahun ke belakang
-                    yahooFinance.historical(symbol, {
-                        // period1: period1,
-                        // period2: period2,
-                        // interval: '1d'
-                        period1: startDate, 
-                        period2: new Date(),
-                        interval: '1d' 
-                    }).catch(e => {
-                        // Jangan didiamkan, kita log biar tahu kalau ada error beneran
-                        console.error(`⚠️ Gagal narik history ${ticker}:`, e.message);
-                        return [];
-                    })
                 ]);
                 // console.log('ini historyResult',quoteResult);
                 // const period2 = Math.floor(Date.now() / 1000); // Hari ini
@@ -2421,7 +2945,23 @@ async function processSectorUpdate(sectorName) {
                 //     // close: quotes.close[index] ? Math.round(quotes.close[index]) : null
                 // })).filter(item => item.close != null); // Filter data null (error yahoo)
                 // console.log(chartData);
-                         
+                const chartData = await yahooFinance.chart(symbol, {
+                    period1: startDate,
+                    period2: new Date(),
+                    interval: '1d'
+                }).catch(e => {
+                    console.error(`⚠️Gagal narik chart ${symbol}:`, e.message);
+                    return null;
+                });                
+
+                // 1. Validasi kalau data kosong dari Yahoo
+                if (!chartData || !chartData.quotes || chartData.quotes.length === 0) {
+                    console.log(`⏩ Skip ${symbol}: Data history kosong`);
+                    continue; 
+                }
+
+                // 2. Bersihkan candle yang harganya bolong/null (Kasus saham TALF dll)
+                const cleanHistory = chartData.quotes.filter(candle => candle.close != null);
 
                 if (!quoteResult || !quoteResult.price || !quoteResult.price.regularMarketPrice) {
                     console.log(`⚠️ Skip ${ticker}: Data corrupt.`);
@@ -2442,7 +2982,8 @@ async function processSectorUpdate(sectorName) {
                     summary.fiftyTwoWeekLow
                 );
 
-                const screenerStats = analyzeCandles(historyResult);
+                const screenerStats = analyzeCandles(cleanHistory);
+                // console.log(screenerStats);
                 
                 const toPercent = (val) => val ? (val * 100).toFixed(2) + "%" : "-";
                 const toX = (val) => val ? val.toFixed(2) + "x" : "-";
@@ -2451,11 +2992,11 @@ async function processSectorUpdate(sectorName) {
                 
                 // A. Hitung MA 20
                 // 1. Hitung MA 20 & 1 Year Return (Logic Sebelumnya)
-                const ma20Value = calculateMA(historyResult, 20);
+                const ma20Value = calculateMA(cleanHistory, 20);
                 
                 let oneYearReturnPct = 0;
-                if (historyResult.length > 0) {
-                    const price1YearAgo = historyResult[0].close;                    
+                if (cleanHistory.length > 0) {
+                    const price1YearAgo = cleanHistory[0].close;                    
                     if (price1YearAgo > 0) {
                         oneYearReturnPct = ((currentPrice - price1YearAgo) / price1YearAgo) * 100;
                     }
@@ -2470,7 +3011,7 @@ async function processSectorUpdate(sectorName) {
                 
                 // Ambil Volume Kemarin (H-1) dari history
                 // Kita ambil index ke-3 dari belakang untuk aman index -1 & -2 masih last daily so ambil -3 yang yesterday nya
-                const prevCandle = historyResult.length >= 3 ? historyResult[historyResult.length - 3] : null;
+                const prevCandle = cleanHistory.length >= 3 ? cleanHistory[cleanHistory.length - 3] : null;
                 
                 const prevVol = prevCandle ? prevCandle.volume : 0; // Fallback kalau data kurang
 
@@ -2502,93 +3043,96 @@ async function processSectorUpdate(sectorName) {
                 //--- STEP 4: SIMPAN KE DB ---
                 await StockModel.findOneAndUpdate(
                     { symbol: symbol },
-                    {
-                        symbol: symbol,
-                        company: priceData.longName,
-                        sector: sectorName.toUpperCase(),
-                        
-                        // ... (Field Harga Sama Kayak Dulu) ...
-                        open: priceData.regularMarketOpen,
-                        high: priceData.regularMarketDayHigh,
-                        low: priceData.regularMarketDayLow,
-                        close: priceData.regularMarketPrice,
-                        change: priceData.regularMarketChange,
-                        changePct: priceData.regularMarketChangePercent 
-                            ? parseFloat((priceData.regularMarketChangePercent * 100).toFixed(2)) 
-                            : 0,
-                        volume: summary.volume,
-                        avgVol10day: priceData.averageDailyVolume10Day,
-                        avgVol3M: priceData.averageDailyVolume3Month,
-                        previousClose: priceData.regularMarketPreviousClose,
+                        {
+                            symbol: symbol,
+                            company: priceData.longName,
+                            sector: sectorName.toUpperCase(),
+                            
+                            // ... (Field Harga Sama Kayak Dulu) ...
+                            open: priceData.regularMarketOpen,
+                            high: priceData.regularMarketDayHigh,
+                            low: priceData.regularMarketDayLow,
+                            close: priceData.regularMarketPrice,
+                            change: priceData.regularMarketChange,
+                            changePct: priceData.regularMarketChangePercent 
+                                ? parseFloat((priceData.regularMarketChangePercent * 100).toFixed(2)) 
+                                : 0,
+                            volume: summary.volume,
+                            avgVol10day: priceData.averageDailyVolume10Day,
+                            avgVol3M: priceData.averageDailyVolume3Month,
+                            previousClose: priceData.regularMarketPreviousClose,
 
-                        percentageDownATH: plan.pctDownATH,
-                        percentageUpFromBottom: plan.pctUpBottom,
-                        fiftyTwoWeekHigh: summary.fiftyTwoWeekHigh,
-                        fiftyTwoWeekLow: summary.fiftyTwoWeekLow,
+                            percentageDownATH: plan.pctDownATH,
+                            percentageUpFromBottom: plan.pctUpBottom,
+                            fiftyTwoWeekHigh: summary.fiftyTwoWeekHigh,
+                            fiftyTwoWeekLow: summary.fiftyTwoWeekLow,
 
-                        fundamentals: {
-                            marketCap: summary.marketCap,
-                            bookValue: stats.bookValue,
-                            pe_ratio: toX(summary.trailingPE),
-                            eps: toDec(stats.trailingEps),
-                            priceToBook: toX(stats.priceToBook),
-                            dividendYield: toPercent(summary.dividendYield),
-                            profitMargins: toPercent(stats.profitMargins),
-                            incomeQoQ: toPercent(stats.earningsQuarterlyGrowth), // "10.5%"
-                            lastDividendValue: stats.lastDividendValue,
-                            enterpriseValue: stats.enterpriseValue,
-                            enterpriseToEBITDA: toX(stats.enterpriseToEbitda),
-                            enterpriseToRevenue: toX(stats.enterpriseToRevenue),
-                            netIncomeToCommon: stats.netIncomeToCommon
+                            fundamentals: {
+                                marketCap: summary.marketCap,
+                                bookValue: stats.bookValue,
+                                pe_ratio: toX(summary.trailingPE),
+                                eps: toDec(stats.trailingEps),
+                                priceToBook: toX(stats.priceToBook),
+                                dividendYield: toPercent(summary.dividendYield),
+                                profitMargins: toPercent(stats.profitMargins),
+                                incomeQoQ: toPercent(stats.earningsQuarterlyGrowth), // "10.5%"
+                                lastDividendValue: stats.lastDividendValue,
+                                enterpriseValue: stats.enterpriseValue,
+                                enterpriseToEBITDA: toX(stats.enterpriseToEbitda),
+                                enterpriseToRevenue: toX(stats.enterpriseToRevenue),
+                                netIncomeToCommon: stats.netIncomeToCommon
+                            },
+
+                            ownership: {
+                                insiders: toPercent(stats.heldPercentInsiders),
+                                institutions: toPercent(stats.heldPercentInstitutions)
+                            },
+
+                            // Screener Field 🔥
+                            screener: {
+                                is_big_money: screenerStats.is_big_money,
+                                big_money_count: screenerStats.big_money_count,
+                                is_small_accum: screenerStats.is_small_accum,
+                                small_money_count: screenerStats.small_money_count,
+                                is_scalping: screenerStats.is_scalping, // <--- JANGAN LUPA INI!
+
+                                // 2. Data Ranking (PENTING BUAT SORTING API)
+                                total_value_today: screenerStats.total_value_today, // Buat ranking Likuiditas
+                                change_pct: screenerStats.change_pct,               // Buat ranking Top Gainers
+                                avg_value_transaction: screenerStats.avg_value_transaction, // Buat filter Big Cap
+
+                                // Technical Indicators
+                                one_years_up: isMatchScreener, 
+
+                                // Detail Indikator (Disimpan biar bisa didebug/ditampilkan)
+                                ma20: ma20Value,
+                                one_year_return: oneYearReturnPct,
+                                tx_value: transactionValue,
+                                vol_spike_ratio: prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0", // Misal: "1.8x"
+
+                                last_updated: new Date()
+                            },
+
+                            trading_plan: {
+                                pivot: plan.pivot,
+                                support_pertahanan: plan.s1,
+                                support_kuat: plan.s2,
+                                support_awal: plan.s3,
+                                best_entry: plan.bestEntry,
+                                avg_down: plan.avgDown,
+                                tsp1: plan.tsp1,
+                                tsp2: plan.tsp2,
+                                tsp3: plan.tsp3,
+                                rekomendasi: priceData.regularMarketPrice < plan.s3 ? "WAIT" : "BUY"
+                            },
+
+                            smart_money_map: screenerStats.smart_money_map,
+                            reaccum_plan: screenerStats.reaccum_plan,
+                            
+                            // Percentage Number (Tanpa %)
+                            percentageDownATH: plan.pctDownATH,
+                            percentageUpFromBottom: plan.pctUpBottom
                         },
-
-                        ownership: {
-                            insiders: toPercent(stats.heldPercentInsiders),
-                            institutions: toPercent(stats.heldPercentInstitutions)
-                        },
-
-                        // Screener Field 🔥
-                        screener: {
-                            is_big_money: screenerStats.is_big_money,
-                            big_money_count: screenerStats.big_money_count,
-                            is_small_accum: screenerStats.is_small_accum,
-                            small_money_count: screenerStats.small_money_count,
-                            is_scalping: screenerStats.is_scalping, // <--- JANGAN LUPA INI!
-
-                            // 2. Data Ranking (PENTING BUAT SORTING API)
-                            total_value_today: screenerStats.total_value_today, // Buat ranking Likuiditas
-                            change_pct: screenerStats.change_pct,               // Buat ranking Top Gainers
-                            avg_value_transaction: screenerStats.avg_value_transaction, // Buat filter Big Cap
-
-                            // Technical Indicators
-                            one_years_up: isMatchScreener, 
-
-                            // Detail Indikator (Disimpan biar bisa didebug/ditampilkan)
-                            ma20: ma20Value,
-                            one_year_return: oneYearReturnPct,
-                            tx_value: transactionValue,
-                            vol_spike_ratio: prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0", // Misal: "1.8x"
-
-                            last_updated: new Date()
-                        },
-
-                        trading_plan: {
-                            pivot: plan.pivot,
-                            support_pertahanan: plan.s1,
-                            support_kuat: plan.s2,
-                            support_awal: plan.s3,
-                            best_entry: plan.bestEntry,
-                            avg_down: plan.avgDown,
-                            tsp1: plan.tsp1,
-                            tsp2: plan.tsp2,
-                            tsp3: plan.tsp3,
-                            rekomendasi: priceData.regularMarketPrice < plan.s3 ? "WAIT" : "BUY"
-                        },
-                        
-                        // Percentage Number (Tanpa %)
-                        percentageDownATH: plan.pctDownATH,
-                        percentageUpFromBottom: plan.pctUpBottom
-                    },
                     { upsert: true, new: true }
                 );
 
@@ -2598,7 +3142,7 @@ async function processSectorUpdate(sectorName) {
                 console.error(`❌ Fail: ${ticker}`, err.message);
             }
             
-            await sleep(1800); // Jangan terlalu ngebut, nanti Yahoo nge-block
+            await sleep(1000); // Jangan terlalu ngebut, nanti Yahoo nge-block
     }
     console.log(`🏁 [CRON] Update Selesai: ${sectorName}`);
 }
@@ -2638,7 +3182,7 @@ async function processIntradayUpdateAll() {
     const today = new Date();
     // Tarik 7 hari ke belakang (buat nutupin libur Sabtu-Minggu)
     const startDate = new Date();
-    startDate.setDate(today.getDate() - 22); 
+    startDate.setDate(today.getDate() - 32);
 
     // 2. Looping langsung dari array gabungan
     for (const symbol of allSymbols) {
@@ -2664,7 +3208,7 @@ async function processIntradayUpdateAll() {
             // 2. Bersihkan candle yang harganya bolong/null (Kasus saham TALF dll)
             const cleanHistory = chartData.quotes.filter(candle => candle.close != null);
 
-           const currentCandle = cleanHistory[cleanHistory.length - 1];
+            const currentCandle = cleanHistory[cleanHistory.length - 1];
             const prevCandle = cleanHistory[cleanHistory.length - 2];
 
             const currentPrice = currentCandle.close;
@@ -2721,41 +3265,41 @@ async function processIntradayUpdateAll() {
                
 
             // --- STEP 3: UPDATE KE DB ---
-            await StockModel.findOneAndUpdate(
-                { symbol: symbol }, // Cari pakai yang ada .JK-nya
-                {
-                    $set: {
-                        // open: quoteResult.regularMarketOpen,
-                        // high: quoteResult.regularMarketDayHigh,
-                        // low: quoteResult.regularMarketDayLow,
-                        // close: currentPrice,
-                        // change: quoteResult.regularMarketChange,
-                        // changePct: quoteResult.regularMarketChangePercent 
-                        //     ? parseFloat((quoteResult.regularMarketChangePercent).toFixed(2)) 
-                        //     : 0,
-                        // volume: currentVol,
-                        // previousClose: prevClosePrice,
-                        open: currentCandle.open,
-                        high: currentCandle.high,
-                        low: currentCandle.low,
-                        close: currentPrice,
-                        change: parseFloat(change.toFixed(2)),
-                        changePct: parseFloat(changePct.toFixed(2)),
-                        volume: currentVol,
-                        previousClose: prevClosePrice,
-                        "screener.is_big_money": screenerStats.is_big_money,
-                        "screener.big_money_count": screenerStats.big_money_count,
-                        "screener.is_small_accum": screenerStats.is_small_accum,
-                        "screener.total_value_today": transactionValue,
-                        "screener.tx_value": transactionValue,
-                        // "screener.change_pct": quoteResult.regularMarketChangePercent,
-                        "screener.change_pct": parseFloat(changePct.toFixed(2)),
-                        "screener.vol_spike_ratio": volSpikeRatio,
-                        "screener.last_updated": new Date()
-                    }
-                },
-                { new: true }
-            );
+            // await StockModel.findOneAndUpdate(
+            //     { symbol: symbol }, // Cari pakai yang ada .JK-nya
+            //     {
+            //         $set: {
+            //             // open: quoteResult.regularMarketOpen,
+            //             // high: quoteResult.regularMarketDayHigh,
+            //             // low: quoteResult.regularMarketDayLow,
+            //             // close: currentPrice,
+            //             // change: quoteResult.regularMarketChange,
+            //             // changePct: quoteResult.regularMarketChangePercent 
+            //             //     ? parseFloat((quoteResult.regularMarketChangePercent).toFixed(2)) 
+            //             //     : 0,
+            //             // volume: currentVol,
+            //             // previousClose: prevClosePrice,
+            //             open: currentCandle.open,
+            //             high: currentCandle.high,
+            //             low: currentCandle.low,
+            //             close: currentPrice,
+            //             change: parseFloat(change.toFixed(2)),
+            //             changePct: parseFloat(changePct.toFixed(2)),
+            //             volume: currentVol,
+            //             previousClose: prevClosePrice,
+            //             "screener.is_big_money": screenerStats.is_big_money,
+            //             "screener.big_money_count": screenerStats.big_money_count,
+            //             "screener.is_small_accum": screenerStats.is_small_accum,
+            //             "screener.total_value_today": transactionValue,
+            //             "screener.tx_value": transactionValue,
+            //             // "screener.change_pct": quoteResult.regularMarketChangePercent,
+            //             "screener.change_pct": parseFloat(changePct.toFixed(2)),
+            //             "screener.vol_spike_ratio": volSpikeRatio,
+            //             "screener.last_updated": new Date()
+            //         }
+            //     },
+            //     { new: true }
+            // );
 
             console.log(`⚡ ${ticker} | P: ${currentPrice} | Vol: ${currentVol} | Spike: ${volSpikeRatio}x`);
 
@@ -2874,12 +3418,12 @@ cron.schedule('45 15 * * 1-5', () => {
     timezone: "Asia/Jakarta" 
 });
 
-// const allSectors = Object.keys(SECTOR_MAP); // Ambil semua nama sektor (FINANCE, BASIC, dll)
+const allSectors = Object.keys(SECTOR_MAP); // Ambil semua nama sektor (FINANCE, BASIC, dll)
     
-//     // Looping untuk update SEMUA sektor satu per satu
-//     for (const sector of allSectors) {
-//         await processSectorUpdate(sector);
-//     }
+    // Looping untuk update SEMUA sektor satu per satu
+    for (const sector of allSectors) {
+        await processSectorUpdate(sector);
+    }
 
-processIntradayUpdateAll()
+// processIntradayUpdateAll()
 // sendSmartScreenerNotif();
