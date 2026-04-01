@@ -45,7 +45,7 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
     // "BUVA", "SOCI", "GEMS", "BSSR", "BBHI", "CMNT", "MTDL"
-    // "BASIC_INDUSTRIAL":["WEHA", "BRPT", 
+    // "BASIC_INDUSTRIAL":["FIRE" 
     // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
@@ -571,7 +571,7 @@ function analyzeCandles(history) {
     result.total_value_today = lastCandle.close * (lastCandle.volume || 0);
 
     // Hitung Rata-rata Transaksi 11 Hari
-    const last11 = cleanHistory.slice(-11);
+    const last11 = cleanHistory.slice(-11);    
     
     const totalValue11 = last11.reduce((acc, c) => acc + (c.close * (c.volume || 0)), 0);
     result.avg_value_transaction = Math.floor(totalValue11 / last11.length);
@@ -620,7 +620,8 @@ function analyzeCandles(history) {
 
         if (curr.close > 50 && isGreenCandle && isVolSpike3x && currTotalValue > MIN_TRANSACTION_BM) {
             // Langsung panggil fungsi kalkulator support-nya
-            activeBM = calculateSupports(curr.low); 
+            const currChangePct = ((curr.close - prev.close) / prev.close) * 100;
+            activeBM = calculateSupports(curr.low, currChangePct);
             
             stateAnvol = "TRENDING"; // Tameng aktif
             activeTBM = null;        // TBM minggir dulu, Bos Besar lewat
@@ -641,8 +642,6 @@ function analyzeCandles(history) {
             }
             stateAnvol = "MENCARI_DASAR_1";
             calon_sav1 = curr.close;
-            console.log('MENCARI_DASAR_1');
-            
         }
         else if (stateAnvol === "MENCARI_DASAR_1") {
             if (curr.close < calon_sav1) {
@@ -650,7 +649,6 @@ function analyzeCandles(history) {
             } else {
                 cek_sav2 = curr.close;
                 stateAnvol = "MENCARI_DASAR_2";
-                console.log('MENCARI_DASAR_2');
             }
         }
         else if (stateAnvol === "MENCARI_DASAR_2") {
@@ -661,7 +659,6 @@ function analyzeCandles(history) {
             } else {
                 cek_sav3 = curr.close;
                 stateAnvol = "MENCARI_DASAR_3"; // Lanjut ujian hari ke-4!
-                console.log('MENCARI_DASAR_3');
             }
         }
         else if (stateAnvol === "MENCARI_DASAR_3") {
@@ -911,37 +908,79 @@ const roundDownToValidTick = (rawPrice) => {
 
 // --- FUNGSI PENGHITUNG SUPPORT GURUMU (UPDATED) ---
 // --- FUNGSI PENGHITUNG SUPPORT & TARGET (UPDATED) ---
-const calculateSupports = (sav) => {
-    // 1. Hitung Area Support (Bawah)
+const calculateSupports = (baseSav, changePct = 0) => {
+    // // 1. Hitung Area Support (Bawah)
+    // const pertahanan = decreaseByTicks(sav, 5);           
+    // const kuat = decreaseByTicks(pertahanan, 5);          
+    // const rawAwal = kuat * (1 - 0.023);          
+    // const awal = roundDownToValidTick(rawAwal); 
+    
+    // // 2. Hitung Area Target Jual / TSP (Atas)
+    // // Rumus: SAV + (Persen Target + 0.4% Fee), bulatkan ke tick valid, lalu turunin 1 tick
+    
+    // // TSP1: Target 8% + 0.4% Fee
+    // const rawTSP1 = sav * (1 + 0.084);
+    // const validTickTSP1 = roundUpToValidTick(rawTSP1); // Bulatkan dulu ke fraksi BEI
+    // const tsp1 = stepDownOneTick(validTickTSP1);         // Turunin 1 papan biar cepat laku!
+
+    // // TSP2: Target 13% + 0.4% Fee
+    // const rawTSP2 = sav * (1 + 0.134);
+    // const validTickTSP2 = roundUpToValidTick(rawTSP2);
+    // const tsp2 = stepDownOneTick(validTickTSP2);
+
+    // // TSP3: Target 23% + 0.4% Fee
+    // const rawTSP3 = sav * (1 + 0.234);
+    // const validTickTSP3 = roundUpToValidTick(rawTSP3);
+    // const tsp3 = stepDownOneTick(validTickTSP3);
+    
+    // return {
+    //     SAV: sav,
+    //     support_pertahanan: pertahanan,
+    //     support_kuat: kuat,
+    //     support_awal: awal,
+    //     TSP1: tsp1, // Masukin hasil hitungan TSP ke output
+    //     TSP2: tsp2,
+    //     TSP3: tsp3
+    // };    
+    let sav = baseSav; // SAV default
+
+    // 🔥 LOGIC BARU DARI GURU: GESER SAV KALAU KANDEL MELEDAK 🔥
+    if (changePct >= 10 && changePct <= 15) {
+        const rawSav = baseSav * (1 + 0.054);
+        sav = roundDownToValidTick(rawSav); // Bulatkan ke fraksi valid BEI
+        // console.log(`[Shift SAV] Kenaikan ${changePct.toFixed(2)}% -> SAV geser ke ${sav}`);
+    } 
+    else if (changePct > 15) {
+        const rawSav = baseSav * (1 + 0.104);
+        sav = roundDownToValidTick(rawSav); 
+        // console.log(`[Shift SAV] Kenaikan Extreme ${changePct.toFixed(2)}% -> SAV geser ke ${sav}`);
+    }
+
+    // 1. Hitung Area Support (Bawah) pakai SAV yang baru
     const pertahanan = decreaseByTicks(sav, 5);           
     const kuat = decreaseByTicks(pertahanan, 5);          
     const rawAwal = kuat * (1 - 0.023);          
     const awal = roundDownToValidTick(rawAwal); 
     
-    // 2. Hitung Area Target Jual / TSP (Atas)
-    // Rumus: SAV + (Persen Target + 0.4% Fee), bulatkan ke tick valid, lalu turunin 1 tick
-    
-    // TSP1: Target 8% + 0.4% Fee
+    // 2. Hitung Area Target Jual / TSP (Atas) pakai SAV yang baru
     const rawTSP1 = sav * (1 + 0.084);
-    const validTickTSP1 = roundUpToValidTick(rawTSP1); // Bulatkan dulu ke fraksi BEI
-    const tsp1 = stepDownOneTick(validTickTSP1);         // Turunin 1 papan biar cepat laku!
+    const validTickTSP1 = roundUpToValidTick(rawTSP1); 
+    const tsp1 = stepDownOneTick(validTickTSP1);    
 
-    // TSP2: Target 13% + 0.4% Fee
     const rawTSP2 = sav * (1 + 0.134);
     const validTickTSP2 = roundUpToValidTick(rawTSP2);
     const tsp2 = stepDownOneTick(validTickTSP2);
 
-    // TSP3: Target 23% + 0.4% Fee
     const rawTSP3 = sav * (1 + 0.234);
     const validTickTSP3 = roundUpToValidTick(rawTSP3);
     const tsp3 = stepDownOneTick(validTickTSP3);
     
     return {
-        SAV: sav,
+        SAV: sav, // Kembalikan SAV yang udah digeser (kalau meledak)
         support_pertahanan: pertahanan,
         support_kuat: kuat,
         support_awal: awal,
-        TSP1: tsp1, // Masukin hasil hitungan TSP ke output
+        TSP1: tsp1, 
         TSP2: tsp2,
         TSP3: tsp3
     };
@@ -3425,5 +3464,5 @@ cron.schedule('45 15 * * 1-5', () => {
 //         await processSectorUpdate(sector);
 //     }
 
-processIntradayUpdateAll()
+// processIntradayUpdateAll()
 // sendSmartScreenerNotif();
