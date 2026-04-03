@@ -45,7 +45,7 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
     // "BUVA", "SOCI", "GEMS", "BSSR", "BBHI", "CMNT", "MTDL"
-    // "BASIC_INDUSTRIAL":["FIRE" 
+    // "BASIC_INDUSTRIAL":["CUAN" 
     // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
@@ -571,7 +571,9 @@ function analyzeCandles(history) {
     result.total_value_today = lastCandle.close * (lastCandle.volume || 0);
 
     // Hitung Rata-rata Transaksi 11 Hari
-    const last11 = cleanHistory.slice(-11);    
+    const last11 = cleanHistory.slice(-11);
+    console.log(last11);
+        
     
     const totalValue11 = last11.reduce((acc, c) => acc + (c.close * (c.volume || 0)), 0);
     result.avg_value_transaction = Math.floor(totalValue11 / last11.length);
@@ -590,6 +592,8 @@ function analyzeCandles(history) {
     let cek_sav3 = 0;
     let cek_sav4 = 0; // 🔥 Tambahin ini bro!
     let cek_sav5 = 0; // 🔥 Amunisi baru untuk hari ke-5
+    let pending_sav = 0; // 🔥 WADAH BARU BUAT SAV YANG BELUM SAH
+    let isBreakoutConfirmed = false; // 🔥 Memori buat nyatet "Bintang Emas"
 
     const MIN_TRANSACTION_BM = 700000000;
     const MIN_TRANSACTION_SMALL = 100000000; // 100 Juta
@@ -605,6 +609,7 @@ function analyzeCandles(history) {
 
         // Referensi tameng saat ini (Pakai BM kalau ada, kalau gak ada pakai TBM)
         let currentReferenceAwal = activeBM ? activeBM.support_awal : (activeTBM ? activeTBM.support_awal : null);
+        let activeSAV = activeBM ? activeBM.SAV : (activeTBM ? activeTBM.SAV : null); // Buat Trailing
         
         // --- A. SUPPORT BIG MONEY ---
         if (activeBM !== null && curr.close < activeBM.support_awal) {
@@ -617,83 +622,189 @@ function analyzeCandles(history) {
 
         const isVolSpike3x = curr.volume > 0 && curr.volume >= (lastValidVolume * 3);
         const isGreenCandle = curr.close > curr.open && curr.close > prev.close;
+        const currChangePct = ((curr.close - prev.close) / prev.close) * 100;
 
         if (curr.close > 50 && isGreenCandle && isVolSpike3x && currTotalValue > MIN_TRANSACTION_BM) {
             // Langsung panggil fungsi kalkulator support-nya
-            const currChangePct = ((curr.close - prev.close) / prev.close) * 100;
             activeBM = calculateSupports(curr.low, currChangePct);
             
             stateAnvol = "TRENDING"; // Tameng aktif
             activeTBM = null;        // TBM minggir dulu, Bos Besar lewat
             const currDate = new Date(curr.date).toISOString().split('T')[0];
             console.log('ini ada BM lho', currDate, curr.volume >= (lastValidVolume * 3), lastValidVolume);
-        }
+        } else if (curr.close > 50 && isGreenCandle && currChangePct > 10) {
+            // Langsung panggil kalkulator, otomatis kena rumus Trailing SAV (+5.4% / +10.4%)
+            activeTBM = calculateSupports(curr.low, currChangePct);
+            
+            stateAnvol = "TRENDING"; // Langsung SAH hari ini juga, bypass 5 hari!
+            
+            const currDate = new Date(curr.date).toISOString().split('T')[0];
+            console.log(`⚡ [${currDate}] INSTANT TBM! Meroket ${currChangePct.toFixed(2)}% membentuk SAV baru seketika.`);
+        } else {
+            // --- B. SUPPORT NON-BIG MONEY (4 HARI PEMASTIAN) ---
+            let isSupportJebol = (currentReferenceAwal !== null && curr.close < currentReferenceAwal);
+    
+            // if (stateAnvol === "TRENDING" && isSupportJebol) {
+            //     if (activeTBM !== null && curr.close < activeTBM.support_awal) {
+            //         const currDate = new Date(curr.date).toISOString().split('T')[0];
+            //         console.log(`🚨 [${currDate}] JEBOL TBM! Close: ${curr.close} tembus Support Awal TBM: ${activeTBM.support_awal}`);
+            //         lastBrokenSupportAwal = activeTBM.support_awal;
+            //         console.log(lastBrokenSupportAwal);
+            //         activeTBM = null;
+            //     }
+            //     stateAnvol = "MENCARI_DASAR_1";
+            //     calon_sav1 = curr.close;
+            // }
+            if (stateAnvol === "TRENDING") {
+                if (isSupportJebol) {
+                    // Tameng Jebol! Reset nyari dasar baru
+                    if (activeTBM !== null) activeTBM = null;
+                    if (activeBM !== null) activeBM = null;
+                    stateAnvol = "MENCARI_DASAR_1";
+                    calon_sav1 = curr.close;
+                    isBreakoutConfirmed = false; // ❌ Gagal, reset memori!
+                    const currDate = new Date(curr.date).toISOString().split('T')[0];
+                    // console.log(`📈 [${currDate}] MENCARI_DASAR_1 ${calon_sav1}`);
+                } 
+                else if (activeSAV !== null) {
+                    // ⚙️ MESIN KATROL (TRAILING SAV) ⚙️
+                    const jarakDariSAV = ((curr.close - activeSAV) / activeSAV) * 100;
+                    if (jarakDariSAV > 10.4) {
+                        const rawNewSAV = activeSAV * (1 + 0.054);
+                        const newSAV = roundDownToValidTick(rawNewSAV); 
+                        
+                        if (activeBM) activeBM = calculateSupports(newSAV, 0);
+                        else if (activeTBM) activeTBM = calculateSupports(newSAV, 0);
 
-        // --- B. SUPPORT NON-BIG MONEY (4 HARI PEMASTIAN) ---
-        let isSupportJebol = (currentReferenceAwal !== null && curr.close < currentReferenceAwal);
+                        // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                        // console.log(`📈 [${currDate}] TRAILING SAV! Jarak ${jarakDariSAV.toFixed(2)}%. SAV ditarik +5.4% dari ${activeSAV} ke ${newSAV}`);
+                    }
 
-        if (stateAnvol === "TRENDING" && isSupportJebol) {
-            if (activeTBM !== null && curr.close < activeTBM.support_awal) {
-                const currDate = new Date(curr.date).toISOString().split('T')[0];
-                console.log(`🚨 [${currDate}] JEBOL TBM! Close: ${curr.close} tembus Support Awal TBM: ${activeTBM.support_awal}`);
-                lastBrokenSupportAwal = activeTBM.support_awal;
-                console.log(lastBrokenSupportAwal);
-                activeTBM = null;
+                    // if (jarakDariSAV > 15.4) {
+                    //     // Katrol Max (+10.4%)
+                    //     const rawNewSAV = activeSAV * (1 + 0.104);
+                    //     const newSAV = roundDownToValidTick(rawNewSAV); 
+                    //     if (activeBM) activeBM = calculateSupports(newSAV, 0);
+                    //     else if (activeTBM) activeTBM = calculateSupports(newSAV, 0);
+                    // } 
+                    // else if (jarakDariSAV > 10.4) {
+                    //     // Katrol Normal (+5.4%)
+                    //     const rawNewSAV = activeSAV * (1 + 0.054);
+                    //     const newSAV = roundDownToValidTick(rawNewSAV); 
+                    //     if (activeBM) activeBM = calculateSupports(newSAV, 0);
+                    //     else if (activeTBM) activeTBM = calculateSupports(newSAV, 0);
+                    // }
+                }
             }
-            stateAnvol = "MENCARI_DASAR_1";
-            calon_sav1 = curr.close;
-        }
-        else if (stateAnvol === "MENCARI_DASAR_1") {
-            if (curr.close < calon_sav1) {
-                calon_sav1 = curr.close; 
-            } else {
-                cek_sav2 = curr.close;
-                stateAnvol = "MENCARI_DASAR_2";
+            else if (stateAnvol === "MENCARI_DASAR_1") {
+                if (curr.close < calon_sav1) {
+                    calon_sav1 = curr.close;
+                    isBreakoutConfirmed = false; // ❌ Gagal, reset memori!
+                    // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                    // console.log(`📈 [${currDate}] MENCARI_DASAR_1 ${calon_sav1}`);
+                } else {
+                    cek_sav2 = curr.close;
+                    stateAnvol = "MENCARI_DASAR_2";
+                    const target = calon_sav1 > 2000 ? (calon_sav1 * 1.03) : (calon_sav1 * 1.05);
+                    if (curr.close > target) isBreakoutConfirmed = true; // ✅ Dapet Bintang Emas!
+                    // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                    // console.log(`📈 [${currDate}] MENCARI_DASAR_2`);
+                }
             }
-        }
-        else if (stateAnvol === "MENCARI_DASAR_2") {
-            const lowestSoFar = Math.min(calon_sav1, cek_sav2);
-            if (curr.close < lowestSoFar) {
-                calon_sav1 = curr.close; 
-                stateAnvol = "MENCARI_DASAR_1"; // Gagal, reset hari 1
-            } else {
-                cek_sav3 = curr.close;
-                stateAnvol = "MENCARI_DASAR_3"; // Lanjut ujian hari ke-4!
+            else if (stateAnvol === "MENCARI_DASAR_2") {
+                const lowestSoFar = Math.min(calon_sav1, cek_sav2);
+                if (curr.close < lowestSoFar) {
+                    calon_sav1 = curr.close; 
+                    stateAnvol = "MENCARI_DASAR_1"; // Gagal, reset hari 1
+                    isBreakoutConfirmed = false; // ❌ Gagal, reset memori!
+                    // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                    // console.log(`📈 [${currDate}] MENCARI_DASAR_1 ${calon_sav1}`);
+                } else {
+                    cek_sav3 = curr.close;
+                    stateAnvol = "MENCARI_DASAR_3"; // Lanjut ujian hari ke-4!
+                    const target = calon_sav1 > 2000 ? (calon_sav1 * 1.03) : (calon_sav1 * 1.05);
+                    if (curr.close > target) isBreakoutConfirmed = true; // ✅ Dapet Bintang Emas!
+                    // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                    // console.log(`📈 [${currDate}] MENCARI_DASAR_3`);
+                }
             }
-        }
-        else if (stateAnvol === "MENCARI_DASAR_3") {
-            const lowestSoFar = Math.min(calon_sav1, cek_sav2, cek_sav3);
-            if (curr.close < lowestSoFar) {
-                calon_sav1 = curr.close; 
-                stateAnvol = "MENCARI_DASAR_1"; 
-            } else {
-                cek_sav4 = curr.close;
-                stateAnvol = "MENCARI_DASAR_4"; // 🔥 Lanjut ke pos penjagaan ke-4
+            else if (stateAnvol === "MENCARI_DASAR_3") {
+                const lowestSoFar = Math.min(calon_sav1, cek_sav2, cek_sav3);
+                if (curr.close < lowestSoFar) {
+                    calon_sav1 = curr.close; 
+                    stateAnvol = "MENCARI_DASAR_1";
+                    isBreakoutConfirmed = false; // ❌ Gagal, reset memori!
+                    // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                    // console.log(`📈 [${currDate}] MENCARI_DASAR_1 ${calon_sav1}`);
+                } else {
+                    cek_sav4 = curr.close;
+                    stateAnvol = "MENCARI_DASAR_4"; // 🔥 Lanjut ke pos penjagaan ke-4
+                    const target = calon_sav1 > 2000 ? (calon_sav1 * 1.03) : (calon_sav1 * 1.05);
+                    if (curr.close > target) isBreakoutConfirmed = true; // ✅ Dapet Bintang Emas!
+                    // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                    // console.log(`📈 [${currDate}] MENCARI_DASAR_4`);
+                }
             }
-        }
-        else if (stateAnvol === "MENCARI_DASAR_4") {
-            // 🔥 Penentuan Akhir di Hari ke-5 🔥
-            const lowestSoFar = Math.min(calon_sav1, cek_sav2, cek_sav3, cek_sav4);
-            if (curr.close < lowestSoFar) {
-                calon_sav1 = curr.close; 
-                stateAnvol = "MENCARI_DASAR_1"; // Sakit nih jebol di tikungan terakhir, balik hari 1!
-                // console.log('Gagal di hari ke-5, balik MENCARI_DASAR_1');
-            } else {
-                cek_sav5 = curr.close;
-                
-                // SAH LULUS 1 MINGGU (5 HARI)! Masukin ke kalkulator
-                const savTerendah = Math.min(calon_sav1, cek_sav2, cek_sav3, cek_sav4, cek_sav5);
-                activeTBM = calculateSupports(savTerendah);
-                const currDate = new Date(curr.date).toISOString().split('T')[0];
-                
-                console.log(`✅ [${currDate}] KETEMU SUPPORT TBM BARU! (Lulus 5 Hari / 1 Minggu)`);
-                stateAnvol = "TRENDING";
+            else if (stateAnvol === "MENCARI_DASAR_4") {
+                // 🔥 Penentuan Akhir di Hari ke-5 🔥
+                const lowestSoFar = Math.min(calon_sav1, cek_sav2, cek_sav3, cek_sav4);
+                if (curr.close < lowestSoFar) {
+                    calon_sav1 = curr.close; 
+                    stateAnvol = "MENCARI_DASAR_1"; // Sakit nih jebol di tikungan terakhir, balik hari 1!
+                    console.log('Gagal di hari ke-5, balik MENCARI_DASAR_1');
+                    isBreakoutConfirmed = false; // ❌ Gagal, reset memori!
+                    // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                    // console.log(`📈 [${currDate}] MENCARI_DASAR_1 ${calon_sav1}`);
+                } else {
+                    cek_sav5 = curr.close;
+                    
+                    // SAH LULUS 1 MINGGU (5 HARI)! Masukin ke kalkulator
+                    const savTerendah = Math.min(calon_sav1, cek_sav2, cek_sav3, cek_sav4, cek_sav5);
+                    const targetKonfirmasi = savTerendah > 2000 ? (savTerendah * 1.03) : (savTerendah * 1.05);
+                    if (curr.close >= targetKonfirmasi) isBreakoutConfirmed = true;
+                    if (isBreakoutConfirmed) {
+                        // KASUS A: Lulus 5 Hari + Punya Bintang Emas (Pernah Breakout) -> LANGSUNG SAH!
+                        activeTBM = calculateSupports(savTerendah, 0);
+                        stateAnvol = "TRENDING";
+                        
+                        // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                        // console.log(`✅ [${currDate}] TBM SAH! (Lulus 5 Hari + Membawa Internal Momentum)`);
+                        
+                        isBreakoutConfirmed = false; // Kosongin lagi buat perjalanan base selanjutnya
+                    } else {
+                        // KASUS B: Lulus 5 hari tapi sideway terus (belum pernah naik 3/5%) -> MASUK RUANG TUNGGU
+                        pending_sav = savTerendah;
+                        stateAnvol = "MENUNGGU_KONFIRMASI";
+                        // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                        // console.log(`✅ [${currDate}] Menunggu Konfirmasi`)
+                    }
+                }
             }
-        }
+            else if (stateAnvol === "MENUNGGU_KONFIRMASI") {
+                // Udah lulus 5 hari, tapi masih nunggu momentum naik 3/5%
+                const targetKonfirmasi = pending_sav > 2000 ? (pending_sav * 1.03) : (pending_sav * 1.05);
 
-        if (curr.volume > 0) {
-            lastValidVolume = curr.volume;
-        }        
+                if (curr.close < pending_sav) {
+                    // Gagal, Base Jebol!
+                    calon_sav1 = curr.close;
+                    stateAnvol = "MENCARI_DASAR_1";
+                    isBreakoutConfirmed = false; // Reset!
+                    // console.log(`❌ BASE JEBOL SAAT NUNGGU KONFIRMASI! Reset ke ${calon_sav1}`);
+                } 
+                else if (curr.close >= targetKonfirmasi) {
+                    // SAH! Akhirnya Berhasil Breakout juga
+                    activeTBM = calculateSupports(pending_sav, 0);
+                    stateAnvol = "TRENDING";
+                    // const currDate = new Date(curr.date).toISOString().split('T')[0];
+                    // console.log(`✅ [${currDate}] TBM SAH! (Breakout setelah masa tunggu)`);
+                }
+                // Kalau harganya masih di tengah-tengah, biarin aja lanjut nunggu besoknya
+            }
+    
+            if (curr.volume > 0) {
+                lastValidVolume = curr.volume;
+            }        
+        }
     }
 
     // ============================================================
@@ -712,14 +823,14 @@ function analyzeCandles(history) {
         result.smart_money_map.support_pertahanan = activeBM.support_pertahanan;
         
         // Tarik data TSP dari object activeBM!
-        result.smart_money_map.TSP1 = activeBM.TSP1; 
-        result.smart_money_map.TSP2 = activeBM.TSP2; 
+        result.smart_money_map.TSP1 = activeBM.TSP1;
+        result.smart_money_map.TSP2 = activeBM.TSP2;
         result.smart_money_map.TSP3 = activeBM.TSP3;
 
         result.reaccum_plan = { reaccum1: null, reaccum2: null, reaccum3: null, reaccum4: null, reaccum5: null };
     } 
     else if (activeTBM !== null) {
-        // Kasta Kedua: Non-Big Money (Base Building 3 Hari)
+        // Kasta Kedua: Non-Big Money (Base Building 4 Hari)
         result.smart_money_map.jenis = "NON_BIG_MONEY";
         
         // Tinggal panggil dari dalam object activeTBM
@@ -2912,6 +3023,14 @@ app.delete('/api/comments/:id', optionalAuth, async (req, res) => {
 app.listen(PORT, () => console.log(`Server run di ${PORT}`));
 
 async function processSectorUpdate(sectorName) {
+    const marketBuka = await isMarketOpenToday();
+    
+    // Kalau libur, langsung suruh fungsinya berhenti (return)
+    if (!marketBuka) {
+        console.log("⏩ Skip update intraday hari ini.");
+        return; 
+    }
+
     if (!sectorName || !SECTOR_MAP[sectorName.toUpperCase()]) {
         console.log(`⚠️ Sektor ${sectorName} tidak valid atau tidak ditemukan.`);
         return;
@@ -3022,7 +3141,7 @@ async function processSectorUpdate(sectorName) {
                 );
 
                 const screenerStats = analyzeCandles(cleanHistory);
-                // console.log(screenerStats);
+                console.log(screenerStats);
                 
                 const toPercent = (val) => val ? (val * 100).toFixed(2) + "%" : "-";
                 const toX = (val) => val ? val.toFixed(2) + "x" : "-";
@@ -3352,8 +3471,59 @@ async function processIntradayUpdateAll() {
     console.log(`🏁 [CRON INTRADAY] Update SEMUA Saham Selesai!`);
 }
 
+async function isMarketOpenToday() {
+    // 1. Set zona waktu ke WIB (Asia/Jakarta) karena server kadang pakai UTC
+    const nowWIB = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"}));
+    
+    // Cek Hari (0 = Minggu, 6 = Sabtu)
+    const day = nowWIB.getDay();
+    if (day === 0 || day === 6) {
+        console.log("💤 Market Libur: Weekend");
+        return false; 
+    }
+
+    try {
+        // 2. Tarik data BBCA sebagai indikator utama market
+        const quote = await yahooFinance.quote('BBCA.JK');
+        
+        if (!quote || !quote.regularMarketTime) {
+            return false;
+        }
+
+        // Ambil tanggal transaksi terakhir dari BBCA (Convert ke WIB)
+        const lastTradeDate = new Date(quote.regularMarketTime);
+        const lastTradeWIB = new Date(lastTradeDate.toLocaleString("en-US", {timeZone: "Asia/Jakarta"}));
+
+        // Cocokkan Tanggal, Bulan, dan Tahun
+        const isToday = 
+            nowWIB.getDate() === lastTradeWIB.getDate() &&
+            nowWIB.getMonth() === lastTradeWIB.getMonth() &&
+            nowWIB.getFullYear() === lastTradeWIB.getFullYear();
+
+        if (!isToday) {
+            console.log(`🛑 Market Libur: Tanggal Merah (Transaksi terakhir BBCA: ${lastTradeWIB.toLocaleDateString()})`);
+            return false;
+        }
+
+        console.log("🟢 Market Buka! Lanjut update data...");
+        return true;
+
+    } catch (error) {
+        console.error("⚠️ Gagal cek status market:", error.message);
+        // Fallback: anggap aja buka biar gak kelewat kalau API error sesaat
+        return true; 
+    }
+}
+
 // Jadwal Cron Job Intraday
-cron.schedule('*/15 09-16 * * 1-5', () => {
+cron.schedule('*/15 09-16 * * 1-5', async () => {
+    const marketBuka = await isMarketOpenToday();
+    
+    // Kalau libur, langsung suruh fungsinya berhenti (return)
+    if (!marketBuka) {
+        console.log("⏩ Skip update intraday hari ini.");
+        return; 
+    }
     const jakartaTime = new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"});
     const now = new Date(jakartaTime);
     console.log(now);
@@ -3438,8 +3608,15 @@ async function sendSmartScreenerNotif() {
 // CRON JOB KHUSUS NOTIFIKASI
 // ==========================================
 // Jalan jam 10:30 pagi (Sesi 1) dan 14:30 siang (Sesi 2), Senin - Jumat
-cron.schedule('0 10,11,12,14 * * 1-5', () => {
+cron.schedule('0 10,11,12,14 * * 1-5', async () => {
     console.log("⏰ [CRON NOTIF] Memicu notifikasi radar (Sesi Jam Pas)...");
+    const marketBuka = await isMarketOpenToday();
+    
+    // Kalau libur, langsung suruh fungsinya berhenti (return)
+    if (!marketBuka) {
+        console.log("⏩ Skip update intraday hari ini.");
+        return; 
+    }
     sendSmartScreenerNotif();
 }, {
     // 🔥 PENTING: Paksa pakai jam WIB
@@ -3448,8 +3625,15 @@ cron.schedule('0 10,11,12,14 * * 1-5', () => {
 });
 
 // 2. Jadwal khusus untuk jam 15:45 (Jelang Penutupan Market)
-cron.schedule('45 15 * * 1-5', () => {
+cron.schedule('45 15 * * 1-5', async () => {
     console.log("⏰ [CRON NOTIF] Memicu notifikasi radar (Sesi 15:45)...");
+    const marketBuka = await isMarketOpenToday();
+    
+    // Kalau libur, langsung suruh fungsinya berhenti (return)
+    if (!marketBuka) {
+        console.log("⏩ Skip update intraday hari ini.");
+        return; 
+    }
     sendSmartScreenerNotif();
 }, {
     // 🔥 PENTING: Paksa pakai jam WIB
@@ -3466,3 +3650,4 @@ cron.schedule('45 15 * * 1-5', () => {
 
 // processIntradayUpdateAll()
 // sendSmartScreenerNotif();
+// isMarketOpenToday()
