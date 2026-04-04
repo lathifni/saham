@@ -45,8 +45,8 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
     // "BUVA", "SOCI", "GEMS", "BSSR", "BBHI", "CMNT", "MTDL"
-    "BASIC_INDUSTRIAL":["BRIS" 
-    ],
+    // "BASIC_INDUSTRIAL":["BRIS" 
+    // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
         "BRPT", "BTON", "CITA", "CLPI", "CTBN", "DKFT", "DPNS", "EKAD", "ESSA", "ETWA", 
