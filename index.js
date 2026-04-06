@@ -45,7 +45,7 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
     // "BUVA", "SOCI", "GEMS", "BSSR", "BBHI", "CMNT", "MTDL"
-    // "BASIC_INDUSTRIAL":["BRIS" 
+    // "BASIC_INDUSTRIAL":["ASPR" 
     // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
@@ -1234,12 +1234,19 @@ function analyzeCandlesIntraday(history) {
 
     // Cek ulang panjang array setelah dibersihkan
     if (cleanHistory.length < 5) return result;
-
+    
     // Sekarang urutannya dijamin UNIK. 
     // -1 = PASTI Candle hari ini (live)
     // -2 = PASTI Candle kemarin (bukan duplikat hari ini)
     const lastCandle = cleanHistory[cleanHistory.length - 1];
     const prevCandle = cleanHistory[cleanHistory.length - 2];
+    const today = new Date();
+    const todayDateStr = today.toISOString().split('T')[0];
+    // Kalau mau aman pakai WIB (Padang/Jakarta), bisa diakalin gini:
+    today.setHours(today.getHours() + 7); 
+    if (lastCandle.date !== todayDateStr) {
+        return result; 
+    }
         
     // Set Data Dasar
     result.last_price = lastCandle.close;
@@ -1249,6 +1256,8 @@ function analyzeCandlesIntraday(history) {
 
     // 0. LOGIC AVG VALUE (11 Hari)
     const last11 = history.slice(-11);
+    console.log(last11);
+    
     const totalValue11 = last11.reduce((acc, c) => acc + (c.close * (c.volume || 0)), 0);
     result.avg_value_transaction = Math.floor(totalValue11 / last11.length);
 
@@ -3400,8 +3409,7 @@ async function processIntradayUpdateAll() {
             const volSpikeRatio = prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0";
             
             // --- STEP 2: LOGIC SCREENER INTRADAY ---
-            const screenerStats = analyzeCandlesIntraday(cleanHistory);
-            
+            const screenerStats = analyzeCandlesIntraday(cleanHistory);            
             
             // --- STEP 1: TARIK DATA SUPER RINGAN ---
             // const [quoteResult, historyResult] = await Promise.all([
@@ -3659,12 +3667,12 @@ cron.schedule('45 15 * * 1-5', async () => {
     timezone: "Asia/Jakarta" 
 });
 
-const allSectors = Object.keys(SECTOR_MAP); // Ambil semua nama sektor (FINANCE, BASIC, dll)
+// const allSectors = Object.keys(SECTOR_MAP); // Ambil semua nama sektor (FINANCE, BASIC, dll)
     
-    // Looping untuk update SEMUA sektor satu per satu
-    for (const sector of allSectors) {
-        await processSectorUpdate(sector);
-    }
+//     // Looping untuk update SEMUA sektor satu per satu
+//     for (const sector of allSectors) {
+//         await processSectorUpdate(sector);
+//     }
 
 // processIntradayUpdateAll()
 // sendSmartScreenerNotif();
