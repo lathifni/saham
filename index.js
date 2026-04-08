@@ -45,7 +45,7 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
     // "BUVA", "SOCI", "GEMS", "BSSR", "BBHI", "CMNT", "MTDL"
-    // "BASIC_INDUSTRIAL":["ASPR" 
+    // "BASIC_INDUSTRIAL":["KUAS" 
     // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
@@ -1076,12 +1076,14 @@ const calculateSupports = (baseSav, changePct = 0) => {
     // 🔥 LOGIC BARU DARI GURU: GESER SAV KALAU KANDEL MELEDAK 🔥
     if (changePct >= 10 && changePct <= 15) {
         const rawSav = baseSav * (1 + 0.054);
-        sav = roundDownToValidTick(rawSav); // Bulatkan ke fraksi valid BEI
+        // sav = roundDownToValidTick(rawSav); // Bulatkan ke fraksi valid BEI
+        sav = roundUpToValidTick(rawSav); // Bulatkan ke fraksi valid BEI
         // console.log(`[Shift SAV] Kenaikan ${changePct.toFixed(2)}% -> SAV geser ke ${sav}`);
     } 
     else if (changePct > 15) {
         const rawSav = baseSav * (1 + 0.104);
-        sav = roundDownToValidTick(rawSav); 
+        sav = roundUpToValidTick(rawSav); 
+        // sav = roundDownToValidTick(rawSav); 
         // console.log(`[Shift SAV] Kenaikan Extreme ${changePct.toFixed(2)}% -> SAV geser ke ${sav}`);
     }
 
