@@ -45,7 +45,7 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
     // "BUVA", "SOCI", "GEMS", "BSSR", "BBHI", "CMNT", "MTDL"
-    // "BASIC_INDUSTRIAL":["KUAS" 
+    // "BASIC_INDUSTRIAL":["HDFA", "TRUK", "POLA" 
     // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
@@ -1242,14 +1242,15 @@ function analyzeCandlesIntraday(history) {
     // -2 = PASTI Candle kemarin (bukan duplikat hari ini)
     const lastCandle = cleanHistory[cleanHistory.length - 1];
     const prevCandle = cleanHistory[cleanHistory.length - 2];
+    const lastCandleDateStr = new Date(lastCandle.date).toISOString().split('T')[0];
     const today = new Date();
     const todayDateStr = today.toISOString().split('T')[0];
     // Kalau mau aman pakai WIB (Padang/Jakarta), bisa diakalin gini:
+    
     today.setHours(today.getHours() + 7); 
-    if (lastCandle.date !== todayDateStr) {
+    if (lastCandleDateStr !== todayDateStr) {
         return result; 
     }
-        
     // Set Data Dasar
     result.last_price = lastCandle.close;
     result.prev_price = prevCandle.close;
@@ -3052,13 +3053,13 @@ app.delete('/api/comments/:id', optionalAuth, async (req, res) => {
 app.listen(PORT, () => console.log(`Server run di ${PORT}`));
 
 async function processSectorUpdate(sectorName) {
-    const marketBuka = await isMarketOpenToday();
+    // const marketBuka = await isMarketOpenToday();
     
-    // Kalau libur, langsung suruh fungsinya berhenti (return)
-    if (!marketBuka) {
-        console.log("⏩ Skip update intraday hari ini.");
-        return; 
-    }
+    // // Kalau libur, langsung suruh fungsinya berhenti (return)
+    // if (!marketBuka) {
+    //     console.log("⏩ Skip update intraday hari ini.");
+    //     return; 
+    // }
 
     if (!sectorName || !SECTOR_MAP[sectorName.toUpperCase()]) {
         console.log(`⚠️ Sektor ${sectorName} tidak valid atau tidak ditemukan.`);
@@ -3411,7 +3412,9 @@ async function processIntradayUpdateAll() {
             const volSpikeRatio = prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0";
             
             // --- STEP 2: LOGIC SCREENER INTRADAY ---
-            const screenerStats = analyzeCandlesIntraday(cleanHistory);            
+            const screenerStats = analyzeCandlesIntraday(cleanHistory);
+            console.log(screenerStats);
+                    
             
             // --- STEP 1: TARIK DATA SUPER RINGAN ---
             // const [quoteResult, historyResult] = await Promise.all([
@@ -3676,6 +3679,6 @@ cron.schedule('45 15 * * 1-5', async () => {
 //         await processSectorUpdate(sector);
 //     }
 
-// processIntradayUpdateAll()
+processIntradayUpdateAll()
 // sendSmartScreenerNotif();
 // isMarketOpenToday()
