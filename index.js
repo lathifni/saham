@@ -6,7 +6,7 @@ import YahooFinance from 'yahoo-finance2';
 import StockModel from './models/stock.js';
 import UserModel from './models/user.js'
 import CommentModel from './models/comment.js'
-import NewsModel from './models/News.js'; // Jangan lupa ekstensi .js-nya kalau pakai ESM murni
+import NewsModel from './models/news.js'; // Jangan lupa ekstensi .js-nya kalau pakai ESM murni
 import axios from 'axios';
 import admin from 'firebase-admin'
 import { createRequire } from "module";

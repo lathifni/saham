@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-const newsSchema = new mongoose.Schema({
+const NewsSchema = new mongoose.Schema({
     title: { 
         type: String, 
         required: true 
@@ -19,4 +19,4 @@ const newsSchema = new mongoose.Schema({
     }
 });
 
-export default mongoose.model('News', newsSchema);
+export default mongoose.model('News', NewsSchema);
