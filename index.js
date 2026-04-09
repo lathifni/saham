@@ -6,6 +6,7 @@ import YahooFinance from 'yahoo-finance2';
 import StockModel from './models/stock.js';
 import UserModel from './models/user.js'
 import CommentModel from './models/comment.js'
+import NewsModel from './models/News.js'; // Jangan lupa ekstensi .js-nya kalau pakai ESM murni
 import axios from 'axios';
 import admin from 'firebase-admin'
 import { createRequire } from "module";
@@ -45,7 +46,7 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
     // "BUVA", "SOCI", "GEMS", "BSSR", "BBHI", "CMNT", "MTDL"
-    // "BASIC_INDUSTRIAL":["HDFA", "TRUK", "POLA" 
+    // "BASIC_INDUSTRIAL":["ASPR" 
     // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
@@ -1519,7 +1520,8 @@ app.post('/api/auth/login', async (req, res) => {
                 $setOnInsert: {
                     joined_at: new Date(),
                     // is_premium: false, <-- HAPUS INI, karena sudah di-set di atas ($set)
-                    has_claimed_promo: false 
+                    has_claimed_promo: false,
+                    is_admin: false
                 }
             },
             { new: true, upsert: true } 
@@ -3050,6 +3052,135 @@ app.delete('/api/comments/:id', optionalAuth, async (req, res) => {
     }
 })
 
+app.get('/api/news', async (req, res) => {
+    try {
+        const newsList = await NewsModel.find().sort({ createdAt: -1 });
+        
+        res.json({
+            status: "success",
+            message: "Berhasil mengambil data berita",
+            data: newsList
+        });
+    } catch (error) {
+        console.error("❌ Error Get News:", error.message);
+        res.status(500).json({ status: "error", message: "Gagal mengambil berita" });
+    }
+});
+
+app.get('/api/news/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Cari di MongoDB pakai Mongoose
+        const news = await NewsModel.findById(id);
+
+        // Kalau ID-nya ngasal atau berita udah dihapus
+        if (!news) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Waduh, beritanya nggak ketemu Bro!'
+            });
+        }
+
+        // Balikin data sesuai format SingleNewsResponse di Android
+        res.json({
+            status: 'success',
+            message: 'Data berhasil diambil',
+            data: news
+        });
+
+    } catch (error) {
+        // Kalau ID-nya bukan format MongoDB yang bener (misal kepanjangan/kependekan)
+        res.status(500).json({
+            status: 'error',
+            message: 'Error: ID nggak valid atau server lagi pusing'
+        });
+    }
+});
+
+app.post('/api/news', async (req, res) => {
+    const { title, source, url } = req.body;
+
+    if (!title || !source || !url) {
+        return res.status(400).json({ status: "error", message: "Semua kolom wajib diisi!" });
+    }
+
+    try {
+        const newNews = new NewsModel({ title, source, url });
+        const savedNews = await newNews.save();
+
+        sendNewNewsNotification(savedNews);
+
+        res.json({
+            status: "success",
+            message: "Berita berhasil ditambahkan!",
+            data: savedNews
+        });
+    } catch (error) {
+        console.error("❌ Error Post News:", error.message);
+        res.status(500).json({ status: "error", message: "Gagal menyimpan berita" });
+    }
+});
+
+app.put('/api/news/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { title, source, url } = req.body;
+
+        const updatedNews = await NewsModel.findByIdAndUpdate(
+            id,
+            { title, source, url },
+            { new: true } // Biar Mongoose balikin data yang terbaru
+        );
+
+        if (!updatedNews) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Gagal update, beritanya gak ada.'
+            });
+        }
+
+        res.json({
+            status: 'success',
+            message: 'Mantap! Berita berhasil diupdate.',
+            data: updatedNews
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            message: error.message
+        });
+    }
+});
+
+app.delete('/api/news/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Perintah sakti Mongoose buat hapus dokumen
+        const deletedNews = await NewsModel.findByIdAndDelete(id);
+
+        if (!deletedNews) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Berita emang udah gak ada, Bro!'
+            });
+        }
+
+        res.json({
+            status: 'success',
+            message: 'Berita berhasil dikubur selamanya! ⚰️'
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            message: 'Gagal hapus: ' + error.message
+        });
+    }
+});
+
 app.listen(PORT, () => console.log(`Server run di ${PORT}`));
 
 async function processSectorUpdate(sectorName) {
@@ -3593,6 +3724,29 @@ cron.schedule('*/15 09-16 * * 1-5', async () => {
     timezone: "Asia/Jakarta" // Wajib biar jamnya akurat ngikutin Jakarta
 });
 
+async function sendNewNewsNotification(newsData) {
+    try {
+        const message = {
+            notification: {
+                title: `${newsData.source} Breaking News! 📰`,
+                // Kita munculin sumber dan judulnya biar user penasaran mau klik
+                body: `${newsData.title}`
+            },
+            // Tambahin data ekstra kalau nanti mau lgsg buka URL pas notif diklik
+            data: {
+                url: newsData.url,
+                type: "news"
+            },
+            topic: "all_users" // Pastikan user di Android subscribe ke topic ini
+        };
+
+        const response = await admin.messaging().send(message);
+        console.log("✅ Notif Berita Berhasil Dikirim:", response);
+    } catch (error) {
+        console.error("❌ Gagal kirim notif berita:", error);
+    }
+}
+
 async function sendSmartScreenerNotif() {
     try {
         // 1. Cari Top 5 Big Accum (Urutkan dari transaksi paling gede)
@@ -3679,6 +3833,6 @@ cron.schedule('45 15 * * 1-5', async () => {
 //         await processSectorUpdate(sector);
 //     }
 
-processIntradayUpdateAll()
+// processIntradayUpdateAll()
 // sendSmartScreenerNotif();
 // isMarketOpenToday()
