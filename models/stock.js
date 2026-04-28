@@ -88,6 +88,19 @@ const StockSchema = new mongoose.Schema({
         reaccum5: { type: [Number], default: null },
     },
 
+    volume_profile: {
+        last_interval: Date,
+        // Kita buat definisinya pake Schema eksplisit biar bisa dikasih opsi _id: false
+        data: [new mongoose.Schema({
+            price: Number,
+            buy_lots: Number,
+            sell_lots: Number,
+            total_lots: Number,
+            percentage: Number 
+        }, { _id: false })], // 🔥 Ini kuncinya, Thif!
+        poc_price: Number
+    },
+
     screener: {
         is_big_money: { type: Boolean, default: false },
         big_money_count: { type: Number, default: 0 },

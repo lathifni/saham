@@ -14,6 +14,8 @@ const require = createRequire(import.meta.url);
 const serviceAccount = require("./serviceAccountKey.json");
 import maskData from './utils/dataMasker.js'; // 👈 Jangan lupa import
 import optionalAuth from './middleware/optionalAuth.js'; // Import middleware tadi
+import { calculateVolumeProfile, fetchTV1mCandles, getDynamicRange } from './volTickHarga.js';
+import pLimit from 'p-limit';
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
 });
@@ -46,7 +48,7 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
     // "BUVA", "SOCI", "GEMS", "BSSR", "BBHI", "CMNT", "MTDL"
-    // "BASIC_INDUSTRIAL":["ASPR" 
+    // "BASIC_INDUSTRIAL":["BBCA" 
     // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
@@ -572,7 +574,7 @@ function analyzeCandles(history) {
     result.total_value_today = lastCandle.close * (lastCandle.volume || 0);
 
     // Hitung Rata-rata Transaksi 11 Hari
-    const last11 = cleanHistory.slice(-11);
+    const last11 = cleanHistory.slice(-11);    
     
     const totalValue11 = last11.reduce((acc, c) => acc + (c.close * (c.volume || 0)), 0);
     result.avg_value_transaction = Math.floor(totalValue11 / last11.length);
@@ -623,7 +625,7 @@ function analyzeCandles(history) {
         const isGreenCandle = curr.close > curr.open && curr.close > prev.close;
         const currChangePct = ((curr.close - prev.close) / prev.close) * 100;
 
-        if (curr.close > 50 && isGreenCandle && isVolSpike3x && currTotalValue > MIN_TRANSACTION_BM) {
+        if (curr.close > 50 && isGreenCandle && isVolSpike3x && currTotalValue > 100000000) {
             // Langsung panggil fungsi kalkulator support-nya
             activeBM = calculateSupports(curr.low, currChangePct);
             
@@ -1260,7 +1262,6 @@ function analyzeCandlesIntraday(history) {
 
     // 0. LOGIC AVG VALUE (11 Hari)
     const last11 = history.slice(-11);
-    console.log(last11);
     
     const totalValue11 = last11.reduce((acc, c) => acc + (c.close * (c.volume || 0)), 0);
     result.avg_value_transaction = Math.floor(totalValue11 / last11.length);
@@ -1870,6 +1871,7 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
                 high: stock.high,
                 low: stock.low,
                 close: stock.close,
+                previousClose: stock.previousClose,
                 change: stock.change,
                 changePct: stock.changePct,
                 volume: Math.floor(stock.volume/100),
@@ -1883,6 +1885,13 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
                 percentageUpFromBottom: stock.percentageUpFromBottom,
                 avgVol10day: Math.floor(stock.avgVol10day / 100),
                 avgVol3M: Math.floor(stock.avgVol3M / 100),
+            },
+            volume_profile: {
+                poc_price: stock.volume_profile?.poc_price || 0,
+                last_interval: stock.volume_profile?.last_interval,
+                
+                // 🔥 SEKARANG URUT DARI KECIL KE BESAR (Ascending) 🔥
+                data: (stock.volume_profile?.data || []).sort((a, b) => a.price - b.price)
             },
             trading_plan: stock.trading_plan, // 👈 Ini yang sudah dimanipulasi di atas
             movingAverages: stock.movingAverages,
@@ -3099,14 +3108,14 @@ app.get('/api/news/:id', async (req, res) => {
 });
 
 app.post('/api/news', async (req, res) => {
-    const { title, source, url } = req.body;
+    const { title, source, url, linkType } = req.body;
 
     if (!title || !source || !url) {
         return res.status(400).json({ status: "error", message: "Semua kolom wajib diisi!" });
     }
 
     try {
-        const newNews = new NewsModel({ title, source, url });
+        const newNews = new NewsModel({ title, source, url, linkType });
         const savedNews = await newNews.save();
 
         sendNewNewsNotification(savedNews);
@@ -3125,11 +3134,11 @@ app.post('/api/news', async (req, res) => {
 app.put('/api/news/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, source, url } = req.body;
+        const { title, source, url, linkType } = req.body;
 
         const updatedNews = await NewsModel.findByIdAndUpdate(
             id,
-            { title, source, url },
+            { title, source, url, linkType },
             { new: true } // Biar Mongoose balikin data yang terbaru
         );
 
@@ -3184,9 +3193,9 @@ app.delete('/api/news/:id', async (req, res) => {
 app.listen(PORT, () => console.log(`Server run di ${PORT}`));
 
 async function processSectorUpdate(sectorName) {
-    // const marketBuka = await isMarketOpenToday();
+    const marketBuka = await isMarketOpenToday();
     
-    // // Kalau libur, langsung suruh fungsinya berhenti (return)
+    // Kalau libur, langsung suruh fungsinya berhenti (return)
     // if (!marketBuka) {
     //     console.log("⏩ Skip update intraday hari ini.");
     //     return; 
@@ -3327,6 +3336,8 @@ async function processSectorUpdate(sectorName) {
                 // A. Data Pendukung
                 const currentVol = summary.volume || 0;
                 const prevClosePrice = priceData.regularMarketPreviousClose;
+                console.log(prevClosePrice, 'ini prevClosePrice');
+                
                 
                 // Ambil Volume Kemarin (H-1) dari history
                 // Kita ambil index ke-3 dari belakang untuk aman index -1 & -2 masih last daily so ambil -3 yang yesterday nya
@@ -3358,6 +3369,14 @@ async function processSectorUpdate(sectorName) {
                 // --- KESIMPULAN AKHIR ---
                 // Semua syarat harus TRUE
                 const isMatchScreener = condVolSpike && condPrice55 && condGreen && condLiquid && condSleeping && condAboveMA20;
+
+                let volumeProfileResult = null;
+                if (currentVol > 0) {
+                    const tvCandles = await fetchTV1mCandles(ticker, 350).catch(e => null);                    
+                    if (tvCandles && tvCandles.length > 0) {
+                        volumeProfileResult = calculateVolumeProfile(tvCandles);
+                    }
+                }            
 
                 //--- STEP 4: SIMPAN KE DB ---
                 await StockModel.findOneAndUpdate(
@@ -3450,7 +3469,13 @@ async function processSectorUpdate(sectorName) {
                             
                             // Percentage Number (Tanpa %)
                             percentageDownATH: plan.pctDownATH,
-                            percentageUpFromBottom: plan.pctUpBottom
+                            percentageUpFromBottom: plan.pctUpBottom,
+
+                            ...(volumeProfileResult && {
+                                "volume_profile.data": volumeProfileResult.data,
+                                "volume_profile.poc_price": volumeProfileResult.poc_price,
+                                "volume_profile.last_interval": new Date()
+                            })
                         },
                     { upsert: true, new: true }
                 );
@@ -3491,8 +3516,102 @@ function getAllSymbols() {
     return allStocks.map(sym => `${sym}.JK`);
 }
 
-// Function Utama (Tanpa parameter sectorName)
+async function updateSingleStock(symbol, startDate) {
+    const ticker = symbol.replace(".JK", "");
+    const dynamicRange = getDynamicRange(); // 🔥 Lu dapet angka dinamis di sini
+    
+    try {
+        const chartData = await yahooFinance.chart(symbol, {
+            period1: startDate,
+            period2: new Date(),
+            interval: '1d'
+        }).catch(e => null);
+
+        if (!chartData || !chartData.quotes || chartData.quotes.length === 0) return;
+
+        const cleanHistory = chartData.quotes.filter(candle => candle.close != null);
+        const currentCandle = cleanHistory[cleanHistory.length - 1];
+        const prevCandle = cleanHistory[cleanHistory.length - 2];
+
+        const currentPrice = currentCandle.close;
+        const currentVol = currentCandle.volume || 0;
+        const prevClosePrice = prevCandle.close;
+        const prevVol = prevCandle.volume || 0;
+
+        const change = currentPrice - prevClosePrice;
+        const changePct = prevClosePrice > 0 ? (change / prevClosePrice) * 100 : 0;
+        const transactionValue = currentPrice * currentVol;
+        const volSpikeRatio = prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0";
+        
+        const screenerStats = analyzeCandlesIntraday(cleanHistory);
+
+        // --- LOGIC TRADING VIEW ---
+        let volumeProfileResult = null;
+        if (currentVol > 0) {
+            const tvCandles = await fetchTV1mCandles(ticker, dynamicRange).catch(e => null);
+            if (tvCandles && tvCandles.length > 0) {
+                volumeProfileResult = calculateVolumeProfile(tvCandles);
+            }
+        }        
+
+        // --- UPDATE KE DB ---
+        await StockModel.findOneAndUpdate(
+            { symbol: symbol },
+            {
+                $set: {
+                    open: currentCandle.open,
+                    high: currentCandle.high,
+                    low: currentCandle.low,
+                    close: currentPrice,
+                    change: parseFloat(change.toFixed(2)),
+                    changePct: parseFloat(changePct.toFixed(2)),
+                    volume: currentVol,
+                    previousClose: prevClosePrice,
+                    "screener.total_value_today": transactionValue,
+                    "screener.change_pct": parseFloat(changePct.toFixed(2)),
+                    "screener.vol_spike_ratio": volSpikeRatio,
+                    "screener.last_updated": new Date(),
+                    ...(volumeProfileResult && {
+                        "volume_profile.data": volumeProfileResult.data,
+                        "volume_profile.poc_price": volumeProfileResult.poc_price,
+                        "volume_profile.last_interval": new Date()
+                    })
+                }
+            }
+        );
+
+        console.log(`⚡ ${ticker} | P: ${currentPrice} | Done!`);
+
+    } catch (err) {
+        console.error(`❌ Fail: ${ticker} ->`, err.message);
+    }
+}
+
 async function processIntradayUpdateAll() {
+    console.log(`🚀 [CRON INTRADAY] Update SEMUA saham dimulai (MODE PARALEL)...`);
+    console.time("DurasiCron");
+
+    const allSymbols = getAllSymbols();
+    const startDate = new Date();
+    startDate.setDate(new Date().getDate() - 32);
+
+    // 🔥 SET LIMIT 5 JALUR 🔥
+    const limit = pLimit(2); 
+
+    // Buat daftar janji (promises)
+    const tasks = allSymbols.map((symbol) => {
+        return limit(() => updateSingleStock(symbol, startDate));
+    });
+
+    // Jalankan semua secara bersamaan (tapi dibatasi 5)
+    await Promise.all(tasks);
+
+    console.timeEnd("DurasiCron");
+    console.log(`🏁 [CRON INTRADAY] Semua Saham Selesai!`);
+}
+
+// Function Utama (Tanpa parameter sectorName)
+async function processIntradayUpdateAllLAAMAAA() {
     console.log(`⚡ [CRON INTRADAY] Update SEMUA saham dimulai...`);
 
     // 1. Ambil seluruh list saham gabungan
@@ -3543,9 +3662,7 @@ async function processIntradayUpdateAll() {
             const volSpikeRatio = prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0";
             
             // --- STEP 2: LOGIC SCREENER INTRADAY ---
-            const screenerStats = analyzeCandlesIntraday(cleanHistory);
-            console.log(screenerStats);
-                    
+            const screenerStats = analyzeCandlesIntraday(cleanHistory);                    
             
             // --- STEP 1: TARIK DATA SUPER RINGAN ---
             // const [quoteResult, historyResult] = await Promise.all([
@@ -3582,7 +3699,16 @@ async function processIntradayUpdateAll() {
             // const transactionValue = currentPrice * currentVol;
             // const volSpikeRatio = prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0";
             // console.log(screenerStats);
-               
+
+            let volumeProfileResult = null;
+            if (currentVol > 0) {
+                const tvCandles = await fetchTV1mCandles(ticker).catch(e => null);
+                if (tvCandles && tvCandles.length > 0) {
+                    volumeProfileResult = calculateVolumeProfile(tvCandles);
+                }
+            } else {
+                console.log(`⏩ Skip ${ticker}: Volume Zero`);
+            }
 
             // --- STEP 3: UPDATE KE DB ---
             await StockModel.findOneAndUpdate(
@@ -3615,7 +3741,12 @@ async function processIntradayUpdateAll() {
                         // "screener.change_pct": quoteResult.regularMarketChangePercent,
                         "screener.change_pct": parseFloat(changePct.toFixed(2)),
                         "screener.vol_spike_ratio": volSpikeRatio,
-                        "screener.last_updated": new Date()
+                        "screener.last_updated": new Date(),
+                        ...(volumeProfileResult && {
+                        "volume_profile.data": volumeProfileResult.data, // Array berisi price, buy, sell, total, percentage
+                        "volume_profile.poc_price": volumeProfileResult.poc_price,
+                        "volume_profile.last_interval": new Date()
+                    })
                     }
                 },
                 { new: true }
@@ -3678,7 +3809,7 @@ async function isMarketOpenToday() {
 }
 
 // Jadwal Cron Job Intraday
-cron.schedule('*/15 09-16 * * 1-5', async () => {
+cron.schedule('*/30 09-16 * * 1-5', async () => {
     const marketBuka = await isMarketOpenToday();
     
     // Kalau libur, langsung suruh fungsinya berhenti (return)
@@ -3718,7 +3849,6 @@ cron.schedule('*/15 09-16 * * 1-5', async () => {
     // Kalau lolos dari kedua gerbang di atas, baru hajar tarik data!
     console.log(`▶️ [${jam}:${menit}] Market jalan, sikat data Intraday!`);
     processIntradayUpdateAll();
-
 }, {
     scheduled: true,
     timezone: "Asia/Jakarta" // Wajib biar jamnya akurat ngikutin Jakarta
@@ -3833,6 +3963,6 @@ cron.schedule('45 15 * * 1-5', async () => {
 //         await processSectorUpdate(sector);
 //     }
 
-// processIntradayUpdateAll()
+processIntradayUpdateAll()
 // sendSmartScreenerNotif();
 // isMarketOpenToday()

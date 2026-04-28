@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@mathieuc/tradingview": "^3.5.2",
     "axios": "^1.13.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
@@ -20,6 +21,7 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.0.0",
     "node-cron": "^4.2.1",
+    "p-limit": "^7.3.0",
     "yahoo-finance2": "^3.13.2"
   },
   "devDependencies": {

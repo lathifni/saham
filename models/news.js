@@ -13,6 +13,11 @@ const NewsSchema = new mongoose.Schema({
         type: String, 
         required: true 
     },
+    linkType: {
+        type: String, 
+        required: true,
+        default: 'browser'
+    },
     createdAt: { 
         type: Date, 
         default: Date.now 
