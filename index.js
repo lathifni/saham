@@ -3964,12 +3964,12 @@ cron.schedule('45 15 * * 1-5', async () => {
     timezone: "Asia/Jakarta" 
 });
 
-const allSectors = Object.keys(SECTOR_MAP); // Ambil semua nama sektor (FINANCE, BASIC, dll)
+// const allSectors = Object.keys(SECTOR_MAP); // Ambil semua nama sektor (FINANCE, BASIC, dll)
     
-    // Looping untuk update SEMUA sektor satu per satu
-    for (const sector of allSectors) {
-        await processSectorUpdate(sector);
-    }
+//     // Looping untuk update SEMUA sektor satu per satu
+//     for (const sector of allSectors) {
+//         await processSectorUpdate(sector);
+//     }
 
 processIntradayUpdateAll()
 // sendSmartScreenerNotif();
