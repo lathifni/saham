@@ -48,7 +48,7 @@ mongoose.connect(process.env.MONGODB_URI, { dbName: 'excellent' })
 // 2. KAMUS SEKTORAL
 const SECTOR_MAP = {
     // "BUVA", "SOCI", "GEMS", "BSSR", "BBHI", "CMNT", "MTDL"
-    // "BASIC_INDUSTRIAL":["BBCA" 
+    // "BASIC_INDUSTRIAL":["PTRO" 
     // ],
     "BASIC_INDUSTRIAL": [
         "AKPI", "ALDO", "ALKA", "ALMI", "ANTM", "APLI", "BAJA", "BMSR", "BRMS", "BRNA", 
@@ -154,7 +154,7 @@ const SECTOR_MAP = {
         "AKSI", "ASSA", "BIRD", "BLTA", "CMPP", "GIAA", "IMJS", "LRNA", "MIRA", "MITI", 
         "NELY", "SAFE", "SDMU", "SMDR", "TAXI", "TMAS", "WEHA", "HELI", "TRUK", "TNCA", 
         "BPTR", "SAPX", "DEAL", "JAYA", "KJEN", "PURA", "PPGL", "TRJA", "HAIS", "HATM", 
-        "RCCC", "ELPI", "LAJU", "GTRA", "MPXL", "KLAS", "LOPI", "BLOG", "PJHB"],
+        "RCCC", "ELPI", "LAJU", "GTRA", "MPXL", "KLAS", "LOPI", "BLOG", "PJHB", "WBSA"],
     "INFRASTRUCTURE": [
         "ACST", "ADHI", "BALI", "BTEL", "BUKK", "CASS", "CENT", "CMNP", "DGIK", "EXCL", 
         "GOLD", "HADE", "IBST", "ISAT", "JKON", "JSMR", "KARW", "KBLV", "LINK", "META", 
@@ -3543,7 +3543,7 @@ async function updateSingleStock(symbol, startDate) {
         const transactionValue = currentPrice * currentVol;
         const volSpikeRatio = prevVol > 0 ? (currentVol / prevVol).toFixed(2) : "0";
         
-        const screenerStats = analyzeCandlesIntraday(cleanHistory);
+        const screenerStats = analyzeCandlesIntraday(cleanHistory);                
 
         // --- LOGIC TRADING VIEW ---
         let volumeProfileResult = null;
@@ -3567,10 +3567,18 @@ async function updateSingleStock(symbol, startDate) {
                     changePct: parseFloat(changePct.toFixed(2)),
                     volume: currentVol,
                     previousClose: prevClosePrice,
+                    "screener.is_big_money": screenerStats.is_big_money,
+                    "screener.big_money_count": screenerStats.big_money_count,
+                    "screener.is_small_accum": screenerStats.is_small_accum,
                     "screener.total_value_today": transactionValue,
+                    "screener.tx_value": transactionValue,
                     "screener.change_pct": parseFloat(changePct.toFixed(2)),
                     "screener.vol_spike_ratio": volSpikeRatio,
                     "screener.last_updated": new Date(),
+                    // "screener.total_value_today": transactionValue,
+                    // "screener.change_pct": parseFloat(changePct.toFixed(2)),
+                    // "screener.vol_spike_ratio": volSpikeRatio,
+                    // "screener.last_updated": new Date(),
                     ...(volumeProfileResult && {
                         "volume_profile.data": volumeProfileResult.data,
                         "volume_profile.poc_price": volumeProfileResult.poc_price,
@@ -3596,7 +3604,7 @@ async function processIntradayUpdateAll() {
     startDate.setDate(new Date().getDate() - 32);
 
     // 🔥 SET LIMIT 5 JALUR 🔥
-    const limit = pLimit(2); 
+    const limit = pLimit(3); 
 
     // Buat daftar janji (promises)
     const tasks = allSymbols.map((symbol) => {
@@ -3956,12 +3964,12 @@ cron.schedule('45 15 * * 1-5', async () => {
     timezone: "Asia/Jakarta" 
 });
 
-// const allSectors = Object.keys(SECTOR_MAP); // Ambil semua nama sektor (FINANCE, BASIC, dll)
+const allSectors = Object.keys(SECTOR_MAP); // Ambil semua nama sektor (FINANCE, BASIC, dll)
     
-//     // Looping untuk update SEMUA sektor satu per satu
-//     for (const sector of allSectors) {
-//         await processSectorUpdate(sector);
-//     }
+    // Looping untuk update SEMUA sektor satu per satu
+    for (const sector of allSectors) {
+        await processSectorUpdate(sector);
+    }
 
 processIntradayUpdateAll()
 // sendSmartScreenerNotif();
