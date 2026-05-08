@@ -46,7 +46,34 @@ const StockSchema = new mongoose.Schema({
     // --- 5. KEPEMILIKAN (Ownership) ---
     ownership: {
         insiders: String, 
-        institutions: String
+        institutions: String,
+        // Data 1 (Statis Efek)
+        local_percentage: Number,    // Dari "Local (%)"
+        foreign_percentage: Number,  // Dari "Foreign (%)"
+        total_scripless: Number,     // Dari "Total Scripless"
+        
+        // Data 2 (Balance Position) - Kita kelompokin biar rapi
+        composition: {
+            local: {
+                IS: Number, CP: Number, PF: Number, IB: Number, ID: Number,
+                MF: Number, SC: Number, FD: Number, OT: Number, Total: Number
+            },
+            foreign: {
+                IS: Number, CP: Number, PF: Number, IB: Number, ID: Number,
+                MF: Number, SC: Number, FD: Number, OT: Number, Total: Number
+            }
+        },
+
+        // Data 3 (PDF 1% Ownership) - Array of Objects
+        top_shareholders: [new mongoose.Schema({
+            investor_name: String,   // "INVESTOR_NAME"
+            investor_type: String,   // "INVESTOR_TYPE" (CP, ID, dll)
+            local_foreign: String,   // "L" atau "F"
+            holding_shares: Number,  // "TOTAL_HOLDING_SHARES"
+            percentage: Number       // "PERCENTAGE"
+        }, { _id: false })],
+
+        last_updated: Date
     },
 
     // --- 6. TEKNIKAL (Moving Averages) ---
