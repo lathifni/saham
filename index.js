@@ -1456,7 +1456,7 @@ app.post('/api/auth/login-LAMA', async (req, res) => {
     }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login-LAMA-TERAKHIR', async (req, res) => {
     const { token } = req.body; 
 
     if (!token) {
@@ -1535,6 +1535,63 @@ app.post('/api/auth/login', async (req, res) => {
             status: "success",
             message: "Login & Sync Berhasil",
             data: user // Android bakal dapet status is_premium yang real-time
+        });
+
+    } catch (error) {
+        console.error("❌ Auth Error:", error.message);
+        res.status(401).json({ 
+            status: "error", 
+            message: "Token tidak valid atau kadaluarsa" 
+        });
+    }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+    const { token } = req.body; 
+
+    if (!token) {
+        return res.status(400).json({ status: "error", message: "Token wajib ada!" });
+    }
+
+    try {
+        // 1. VERIFIKASI TOKEN KE GOOGLE
+        const decodedToken = await admin.auth().verifyIdToken(token);
+        const { uid, email, name, picture } = decodedToken;
+
+        console.log(`👤 User Login: ${email}`);
+
+        // ============================================================
+        // 2. SIMPAN / UPDATE KE MONGODB (TANPA REVENUECAT)
+        // ============================================================
+        const user = await UserModel.findOneAndUpdate(
+            { email: email }, 
+            {
+                // $set: Update data ini setiap kali user login (Data Umum)
+                $set: {
+                    firebase_uid: uid,
+                    display_name: name || "User Tanpa Nama",
+                    photo_url: picture || "",
+                    last_login: new Date()
+                    // 🔥 JANGAN taruh is_premium di sini biar setingan manual di DB gak kerestart!
+                },
+                // $setOnInsert: Hanya dieksekusi saat user BARU PERTAMA KALI login/daftar
+                $setOnInsert: {
+                    joined_at: new Date(),
+                    is_premium: false, // Default user baru = Free
+                    has_claimed_promo: false,
+                    is_admin: false
+                }
+            },
+            { new: true, upsert: true } 
+        );
+
+        // 3. KIRIM BALIKAN KE ANDROID
+        console.log(`✅ Login Success: ${email} | Premium: ${user.is_premium}`);
+        
+        res.json({
+            status: "success",
+            message: "Login Berhasil",
+            data: user // Android bakal dapet status is_premium hasil editan manual kamu di DB
         });
 
     } catch (error) {
@@ -1816,7 +1873,7 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
 
     try {
         // 1. Cek Status Premium User
-        // const isPremium = req.user ? req.user.is_premium : false;
+        const isPremium = req.user ? req.user.is_premium : false;
         // console.log(`🔍 Request ${ticker} by ${req.user?.email || 'Guest'} (Premium: ${isPremium})`);
 
         // 2. Ambil Data dari DB
@@ -1829,39 +1886,48 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
         let stock = stockRaw.toObject();
 
         // 3. LOGIC SENSOR (-1 Strategy) 🔒 KITA HIDE DULU
-        // if (!isPremium) {
-        //     // Kita timpa object trading_plan dengan nilai -1
-        //     stock.trading_plan = {
-        //         status: "PREMIUM ONLY", 
-        //         action: "LOCKED",
+        if (!isPremium) {
+            // Kita timpa object trading_plan dengan nilai -1
+            stock.trading_plan = {
+                status: "PREMIUM ONLY", 
+                action: "LOCKED",
                 
-        //         // --- TIDAK RAWAN ---
-        //         pivot: -1,
-        //         tsp1: -1,
-        //         tsp2: -1,
-        //         tsp3: -1,
+                // --- TIDAK RAWAN ---
+                pivot: -1,
+                tsp1: -1,
+                tsp2: -1,
+                tsp3: -1,
                 
-        //         // --- 🔥 BAGIAN KRUSIAL (JANGAN SALAH KETIK) 🔥 ---
+                // --- 🔥 BAGIAN KRUSIAL (JANGAN SALAH KETIK) 🔥 ---
                 
-        //         // 1. Android minta @SerializedName("support_pertahanan")
-        //         support_pertahanan: -1,  // ✅ JANGAN supportPertahanan
+                // 1. Android minta @SerializedName("support_pertahanan")
+                support_pertahanan: -1,  // ✅ JANGAN supportPertahanan
 
-        //         // 2. Android minta @SerializedName("support_kuat")
-        //         support_kuat: -1,        // ✅ JANGAN supportKuat
+                // 2. Android minta @SerializedName("support_kuat")
+                support_kuat: -1,        // ✅ JANGAN supportKuat
                 
-        //         // 3. Android minta @SerializedName("support_awal")
-        //         support_awal: -1,        // ✅ JANGAN supportAwal
+                // 3. Android minta @SerializedName("support_awal")
+                support_awal: -1,        // ✅ JANGAN supportAwal
 
-        //         // 4. Android minta @SerializedName("best_entry")
-        //         best_entry: [-1, -1],    // ✅ JANGAN bestEntry (Ini biang kerok crashnya!)
+                // 4. Android minta @SerializedName("best_entry")
+                best_entry: [-1, -1],    // ✅ JANGAN bestEntry (Ini biang kerok crashnya!)
 
-        //         // 5. Android minta @SerializedName("avg_down")
-        //         avg_down: [-1]           // ✅ JANGAN avgDown
-        //     };
+                // 5. Android minta @SerializedName("avg_down")
+                avg_down: [-1]           // ✅ JANGAN avgDown
+            };
+            if (stock.smart_money_map) {
+                stock.smart_money_map.support_pertahanan = -1;
+                stock.smart_money_map.support_kuat = -1;
+                stock.smart_money_map.support_awal = -1;
+                stock.smart_money_map.TSP1 = -1;
+                stock.smart_money_map.TSP2 = -1;
+                stock.smart_money_map.TSP3 = -1;
+            }
             
-        //     // Opsional: Kalau ownership mau disensor juga
-        //     // stock.ownership = []; 
-        // }
+            // Opsional: Kalau ownership mau disensor juga
+            // stock.ownership = []; 
+        }
+        
 
         // 4. Kirim Response (Struktur JSON Tetap Sama)
         res.json({
@@ -1901,8 +1967,8 @@ app.get('/api/analyze', optionalAuth, async (req, res) => {
             reaccum_plan: stock.reaccum_plan,
             
             // Flag tambahan buat Android tau user ini statusnya apa (opsional tapi berguna)
-            // is_locked: !isPremium 
-            is_locked: false 
+            is_locked: !isPremium 
+            // is_locked: false 
         });
 
     } catch (error) {
